@@ -21,6 +21,8 @@ import {
   Shield,
   Heart,
 } from "lucide-react"
+import { useRouter } from "next/navigation" 
+// (Make sure it's next/navigation, NOT next/router!)
 
 declare global {
   interface Window {
@@ -55,6 +57,7 @@ const healthConcernOptions = [
 ]
 
 export default function AuthPage() {
+  const router = useRouter()
   const [authMode, setAuthMode] = useState<AuthMode>("login")
   const [loginMethod, setLoginMethod] = useState<LoginMethod>("swasthya-id")
   const [authState, setAuthState] = useState<AuthState>("initial")
@@ -171,7 +174,7 @@ export default function AuthPage() {
         setAuthState("success")
       } else {
         alert("Login successful! Redirecting to dashboard...")
-        window.location.href = "http://localhost:3000"
+        router.push("/dashboard")
       }
     } catch (error) {
       alert("Incorrect OTP. Please try again.")
