@@ -1,3 +1,5 @@
+import os
+from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -5,6 +7,14 @@ import database
 import schemas
 import json
 import requests
+
+# 1. Load environment variables from the .env file
+load_dotenv()
+
+# 2. Grab the API key securely. Fails fast if it's missing!
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise ValueError("CRITICAL: No API key found. Please check your .env file.")
 
 app = FastAPI(title="SwasthyaLink API")
 
@@ -28,7 +38,7 @@ def get_db():
 def read_root():
     return {"status": "Server is running", "message": "Welcome to SwasthyaLink Core"}
 
-# NEW ENDPOINT: Register a user
+# ENDPOINT: Register a user
 @app.post("/register", response_model=schemas.UserResponse)
 def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     # Check if a user with this mobile number already exists
@@ -60,7 +70,7 @@ def triage_chat(chat_request: schemas.ChatRequest, db: Session = Depends(get_db)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-# 2. The Strict System Prompt (Context-Aware & Differential Upgraded)
+    # 2. The Strict System Prompt (Context-Aware & Differential Upgraded)
     system_prompt = f"""
     You are SwasthyaLink, a highly advanced, pre-clinical AI triage medical assistant specifically designed for the city of Pune, Maharashtra.
     Your primary directive is to analyze patient symptoms, cross-reference them with the patient's biological profile, and output a highly structured, accurate, and safe preliminary medical assessment.
@@ -81,10 +91,9 @@ def triage_chat(chat_request: schemas.ChatRequest, db: Session = Depends(get_db)
         "recommended_specialist": "Exact Doctor Specialty"
     }}
     """
- # 3. Call the Gemini 2.5 API
-    API_KEY = "AIzaSyAszY5I6p_hY02QRo-2CxMO8wyEKhopzD4" 
-    # Swapped to the Gemini 3 Flash server cluster to bypass the 503 overload
-    API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={API_KEY}"
+    
+    # 3. Call the Gemini API using the secure key from .env
+    API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={GEMINI_API_KEY}"
     headers = {
         "Content-Type": "application/json"
     }
