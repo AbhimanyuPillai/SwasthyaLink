@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useMemo } from "react"
 import { auth } from "@/lib/firebase"
 import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from "firebase/auth"
 import {
@@ -35,7 +35,6 @@ type AuthState = "initial" | "otp" | "success"
 interface FormData {
   fullName: string
   dob: string
-  age: string
   gender: string
   bloodGroup: string
   email: string
@@ -66,7 +65,7 @@ export default function AuthPage() {
   const [isLoading, setIsLoading] = useState(false)
 
   const [formData, setFormData] = useState<FormData>({
-    fullName: "", dob: "", age: "", gender: "", bloodGroup: "", email: "",
+    fullName: "", dob: "", gender: "", bloodGroup: "", email: "",
     mobile: "", emergencyContact: "", height: "", weight: "", healthConcerns: [],
   })
 
@@ -169,13 +168,9 @@ export default function AuthPage() {
       await confirmationResult.confirm(otpString)
       
       if (authMode === "register") {
-        // If they are registering, let your existing UI show the success state first
         setAuthState("success")
       } else {
-        // IF THEY ARE LOGGING IN:
         alert("Login successful! Redirecting to dashboard...")
-        
-        // The Hackathon Bridge: Jump to the client_side app
         window.location.href = "http://localhost:3000"
       }
     } catch (error) {
@@ -186,88 +181,127 @@ export default function AuthPage() {
   }
 
   return (
-    <main className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center gap-3 mb-2">
-            <div className="w-12 h-12 bg-primary rounded-lg flex items-center justify-center">
-              <Heart className="w-7 h-7 text-primary-foreground" />
+    <main className="min-h-screen flex flex-col lg:flex-row">
+      {/* Left Panel - Blurred Healthcare Background with Logo */}
+      <div className="lg:w-1/2 relative flex items-center justify-center p-8 lg:p-12 min-h-[200px] lg:min-h-screen overflow-hidden">
+        {/* Background image with blur */}
+        <div 
+          className="absolute inset-0 bg-cover bg-center"
+          style={{
+            backgroundImage: `url("/healthcare-bg.jpg")`,
+            filter: "blur(6px)",
+            transform: "scale(1.1)",
+          }}
+        />
+        {/* Dark overlay for better contrast */}
+        <div className="absolute inset-0 bg-navy/70" />
+        
+        <div className="relative z-10 text-center">
+          <div className="inline-flex flex-col items-center gap-4">
+            {/* Logo image */}
+            <div className="w-28 h-28 lg:w-36 lg:h-36 bg-white rounded-2xl flex items-center justify-center shadow-lg p-3">
+              <img 
+                src="/swasthyalink-logo.png" 
+                alt="Swasthya Link Logo" 
+                className="w-full h-full object-contain"
+              />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-primary tracking-tight">Swasthya Link</h1>
-              <p className="text-xs text-muted-foreground tracking-wide">Official Healthcare Portal</p>
+              <h1 className="text-3xl lg:text-4xl font-bold text-white tracking-tight">Swasthya Link</h1>
+              {/* Saffron accent line */}
+              <div className="w-16 h-1 bg-saffron mx-auto mt-3 mb-3 rounded-full" />
+              <p className="text-sm lg:text-base text-white/80 tracking-wide">Your Digital Health Companion</p>
+            </div>
+          </div>
+          
+          {/* Additional decorative elements for desktop */}
+          <div className="hidden lg:block mt-12 space-y-4 text-white/70 text-sm">
+            <div className="flex items-center justify-center gap-2">
+              <Shield className="w-4 h-4" />
+              <span>Secure & Encrypted</span>
+            </div>
+            <div className="flex items-center justify-center gap-2">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Your Health, Connected</span>
             </div>
           </div>
         </div>
+      </div>
 
-        <div className="bg-card rounded-xl shadow-lg border border-border overflow-hidden relative">
-          
-          {/* FIREBASE RECAPTCHA */}
-          <div id="recaptcha-container"></div>
+      {/* Right Panel - White with Auth Card */}
+      <div className="lg:w-1/2 bg-background flex items-center justify-center p-4 lg:p-8 flex-1">
+        <div className="w-full max-w-md">
+          <div className="bg-card rounded-xl shadow-lg border border-border overflow-hidden relative">
+            
+            {/* FIREBASE RECAPTCHA */}
+            <div id="recaptcha-container"></div>
 
-          {authState === "success" ? (
-            <SuccessScreen formData={formData} onProceed={() => switchAuthMode("login")} />
-          ) : (
-            <>
-              <div className="flex border-b border-border">
-                <button
-                  onClick={() => switchAuthMode("login")}
-                  className={`flex-1 py-4 text-sm font-semibold transition-colors ${
-                    authMode === "login" ? "text-primary border-b-2 border-primary bg-muted/30" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  Login
-                </button>
-                <button
-                  onClick={() => switchAuthMode("register")}
-                  className={`flex-1 py-4 text-sm font-semibold transition-colors ${
-                    authMode === "register" ? "text-primary border-b-2 border-primary bg-muted/30" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  Register
-                </button>
-              </div>
+            {authState === "success" ? (
+              <SuccessScreen formData={formData} onProceed={() => switchAuthMode("login")} />
+            ) : (
+              <>
+                <div className="flex border-b border-border">
+                  <button
+                    type="button"
+                    onClick={() => switchAuthMode("login")}
+                    className={`flex-1 py-4 text-sm font-semibold transition-colors ${
+                      authMode === "login" ? "text-primary border-b-2 border-primary bg-muted/30" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Login
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => switchAuthMode("register")}
+                    className={`flex-1 py-4 text-sm font-semibold transition-colors ${
+                      authMode === "register" ? "text-primary border-b-2 border-primary bg-muted/30" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Register
+                  </button>
+                </div>
 
-              <div className="p-6">
-                {authState === "otp" ? (
-                  <OtpVerification
-                    otp={otp}
-                    otpRefs={otpRefs}
-                    onOtpChange={handleOtpChange}
-                    onOtpKeyDown={handleOtpKeyDown}
-                    onVerify={handleVerifyOtp}
-                    onBack={resetToInitial}
-                    isRegistration={authMode === "register"}
-                    isLoading={isLoading}
-                  />
-                ) : authMode === "login" ? (
-                  <LoginForm
-                    loginMethod={loginMethod}
-                    setLoginMethod={setLoginMethod}
-                    loginInput={loginInput}
-                    setLoginInput={setLoginInput}
-                    onGetOtp={() => handleSendOtp(loginInput)}
-                    isLoading={isLoading}
-                  />
-                ) : (
-                  <RegisterForm
-                    formData={formData}
-                    setFormData={setFormData}
-                    healthConcernOptions={healthConcernOptions}
-                    onHealthConcernToggle={handleHealthConcernToggle}
-                    onSendOtp={() => handleSendOtp(formData.mobile)}
-                    isLoading={isLoading}
-                  />
-                )}
-              </div>
-            </>
-          )}
-        </div>
+                <div className="p-6">
+                  {authState === "otp" ? (
+                    <OtpVerification
+                      otp={otp}
+                      otpRefs={otpRefs}
+                      onOtpChange={handleOtpChange}
+                      onOtpKeyDown={handleOtpKeyDown}
+                      onVerify={handleVerifyOtp}
+                      onBack={resetToInitial}
+                      isRegistration={authMode === "register"}
+                      isLoading={isLoading}
+                    />
+                  ) : authMode === "login" ? (
+                    <LoginForm
+                      loginMethod={loginMethod}
+                      setLoginMethod={setLoginMethod}
+                      loginInput={loginInput}
+                      setLoginInput={setLoginInput}
+                      onGetOtp={() => handleSendOtp(loginInput)}
+                      isLoading={isLoading}
+                    />
+                  ) : (
+                    <RegisterForm
+                      formData={formData}
+                      setFormData={setFormData}
+                      healthConcernOptions={healthConcernOptions}
+                      onHealthConcernToggle={handleHealthConcernToggle}
+                      onSendOtp={() => handleSendOtp(formData.mobile)}
+                      isLoading={isLoading}
+                    />
+                  )}
+                </div>
+              </>
+            )}
+          </div>
 
-        <div className="mt-6 text-center">
-          <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
-            <Shield className="w-3.5 h-3.5" />
-            <span>Secured by Government of India</span>
+          <div className="mt-6 text-center">
+            <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+              <Shield className="w-3.5 h-3.5" />
+              <span>Your data is secure and encrypted</span>
+            </div>
           </div>
         </div>
       </div>
@@ -346,6 +380,7 @@ function LoginForm({ loginMethod, setLoginMethod, loginInput, setLoginInput, onG
         ].map(({ id, icon: Icon, label }) => (
           <button
             key={id}
+            type="button"
             onClick={() => setLoginMethod(id as LoginMethod)}
             className={`flex-1 flex flex-col items-center gap-1.5 py-3 px-2 rounded-lg border transition-all ${
               loginMethod === id ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:border-primary/50"
@@ -379,6 +414,7 @@ function LoginForm({ loginMethod, setLoginMethod, loginInput, setLoginInput, onG
             )}
           </div>
           <button
+            type="button"
             onClick={handleScanQrClick}
             className="w-full py-3 bg-saffron text-saffron-foreground font-semibold rounded-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
           >
@@ -408,6 +444,7 @@ function LoginForm({ loginMethod, setLoginMethod, loginInput, setLoginInput, onG
             </div>
           </div>
           <button
+            type="button"
             onClick={onGetOtp}
             disabled={!loginInput || isLoading}
             className="w-full py-3 bg-success text-success-foreground font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
@@ -421,10 +458,26 @@ function LoginForm({ loginMethod, setLoginMethod, loginInput, setLoginInput, onG
   )
 }
 
+// Helper function to calculate age from DOB
+function calculateAge(dob: string): number | null {
+  if (!dob) return null
+  const birthDate = new Date(dob)
+  const today = new Date()
+  let age = today.getFullYear() - birthDate.getFullYear()
+  const monthDiff = today.getMonth() - birthDate.getMonth()
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+    age--
+  }
+  return age >= 0 ? age : null
+}
+
 function RegisterForm({ formData, setFormData, healthConcernOptions, onHealthConcernToggle, onSendOtp, isLoading }: any) {
   const updateField = (field: keyof FormData, value: string) => {
     setFormData((prev: any) => ({ ...prev, [field]: value }))
   }
+
+  // Auto-calculate age from DOB
+  const calculatedAge = useMemo(() => calculateAge(formData.dob), [formData.dob])
 
   return (
     <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-2">
@@ -437,15 +490,12 @@ function RegisterForm({ formData, setFormData, healthConcernOptions, onHealthCon
             <label className="block text-xs font-medium text-muted-foreground mb-1.5">Full Name</label>
             <input type="text" value={formData.fullName} onChange={(e) => updateField("fullName", e.target.value)} placeholder="Enter your full name" className="w-full px-3 py-2.5 border border-input rounded-lg bg-background text-sm" />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5"><Calendar className="w-3 h-3 inline mr-1" />Date of Birth</label>
-              <input type="date" value={formData.dob} onChange={(e) => updateField("dob", e.target.value)} className="w-full px-3 py-2.5 border border-input rounded-lg bg-background text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Age</label>
-              <input type="number" value={formData.age} onChange={(e) => updateField("age", e.target.value)} placeholder="Age" className="w-full px-3 py-2.5 border border-input rounded-lg bg-background text-sm" />
-            </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5"><Calendar className="w-3 h-3 inline mr-1" />Date of Birth</label>
+            <input type="date" value={formData.dob} onChange={(e) => updateField("dob", e.target.value)} className="w-full px-3 py-2.5 border border-input rounded-lg bg-background text-sm" />
+            {calculatedAge !== null && (
+              <p className="text-xs text-muted-foreground mt-1.5">Age: {calculatedAge} years</p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -508,13 +558,25 @@ function RegisterForm({ formData, setFormData, healthConcernOptions, onHealthCon
             <label className="block text-xs font-medium text-muted-foreground mb-2">Major Health Concerns</label>
             <div className="grid grid-cols-2 gap-2">
               {healthConcernOptions.map((concern: string) => (
-                <label key={concern} className={`flex items-center gap-2 p-2.5 border rounded-lg cursor-pointer transition-all text-sm ${formData.healthConcerns.includes(concern) ? "border-primary bg-primary/5 text-primary" : "border-input hover:border-primary/50"}`}>
-                  <input type="checkbox" checked={formData.healthConcerns.includes(concern)} onChange={() => onHealthConcernToggle(concern)} className="sr-only" />
-                  <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${formData.healthConcerns.includes(concern) ? "bg-primary border-primary" : "border-input"}`}>
+                <div
+                  key={concern}
+                  role="checkbox"
+                  aria-checked={formData.healthConcerns.includes(concern)}
+                  tabIndex={0}
+                  onClick={() => onHealthConcernToggle(concern)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault()
+                      onHealthConcernToggle(concern)
+                    }
+                  }}
+                  className={`flex items-center gap-2 p-2.5 border rounded-lg cursor-pointer transition-all text-sm select-none ${formData.healthConcerns.includes(concern) ? "border-primary bg-primary/5 text-primary" : "border-input hover:border-primary/50"}`}
+                >
+                  <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors flex-shrink-0 ${formData.healthConcerns.includes(concern) ? "bg-primary border-primary" : "border-input"}`}>
                     {formData.healthConcerns.includes(concern) && <CheckCircle2 className="w-3 h-3 text-primary-foreground" />}
                   </div>
                   <span className="text-xs">{concern}</span>
-                </label>
+                </div>
               ))}
             </div>
           </div>
@@ -522,6 +584,7 @@ function RegisterForm({ formData, setFormData, healthConcernOptions, onHealthCon
       </div>
 
       <button
+        type="button"
         onClick={onSendOtp}
         disabled={!formData.fullName || !formData.mobile || isLoading}
         className="w-full py-3 bg-success text-success-foreground font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
@@ -562,6 +625,7 @@ function OtpVerification({ otp, otpRefs, onOtpChange, onOtpKeyDown, onVerify, on
 
       <div className="space-y-3">
         <button
+          type="button"
           onClick={onVerify}
           disabled={otp.some((d: string) => !d) || isLoading}
           className="w-full py-3 bg-success text-success-foreground font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
@@ -569,7 +633,7 @@ function OtpVerification({ otp, otpRefs, onOtpChange, onOtpKeyDown, onVerify, on
           {isLoading ? "Verifying..." : (isRegistration ? "Verify & Register" : "Verify & Login")}
           {!isLoading && <CheckCircle2 className="w-4 h-4" />}
         </button>
-        <button onClick={onBack} className="w-full py-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+        <button type="button" onClick={onBack} className="w-full py-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
           Back
         </button>
       </div>
@@ -579,6 +643,7 @@ function OtpVerification({ otp, otpRefs, onOtpChange, onOtpKeyDown, onVerify, on
 
 function SuccessScreen({ formData, onProceed }: any) {
   const swasthyaId = "SL-" + Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase()
+  const calculatedAge = calculateAge(formData.dob)
 
   return (
     <div className="p-6 space-y-6">
@@ -622,6 +687,10 @@ function SuccessScreen({ formData, onProceed }: any) {
                 <p className="font-medium">{formData.dob || "01/01/1990"}</p>
               </div>
               <div>
+                <p className="opacity-70 text-[10px]">Age</p>
+                <p className="font-medium">{calculatedAge !== null ? `${calculatedAge}y` : "-"}</p>
+              </div>
+              <div>
                 <p className="opacity-70 text-[10px]">Gender</p>
                 <p className="font-medium capitalize">{formData.gender || "Male"}</p>
               </div>
@@ -644,10 +713,10 @@ function SuccessScreen({ formData, onProceed }: any) {
       </div>
 
       <div className="space-y-3">
-        <button className="w-full py-3 bg-saffron text-saffron-foreground font-semibold rounded-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-2">
+        <button type="button" className="w-full py-3 bg-saffron text-saffron-foreground font-semibold rounded-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-2">
           <Download className="w-4 h-4" /> Download Official Card
         </button>
-        <button onClick={onProceed} className="w-full py-3 bg-primary text-primary-foreground font-semibold rounded-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-2">
+        <button type="button" onClick={onProceed} className="w-full py-3 bg-primary text-primary-foreground font-semibold rounded-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-2">
           Proceed to Dashboard <ArrowRight className="w-4 h-4" />
         </button>
       </div>

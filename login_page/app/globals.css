@@ -41,6 +41,8 @@
   --success-foreground: oklch(1 0 0);
   --saffron: oklch(0.72 0.16 75);
   --saffron-foreground: oklch(0.25 0.05 250);
+  --navy: oklch(0.25 0.08 250);
+  --navy-foreground: oklch(1 0 0);
 }
 
 .dark {
@@ -121,6 +123,8 @@
   --color-success-foreground: var(--success-foreground);
   --color-saffron: var(--saffron);
   --color-saffron-foreground: var(--saffron-foreground);
+  --color-navy: var(--navy);
+  --color-navy-foreground: var(--navy-foreground);
 }
 
 @layer base {
