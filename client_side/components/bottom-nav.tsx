@@ -3,7 +3,7 @@
 import { FileText, MessageSquare, Newspaper, User } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-type Tab = "records" | "agent" | "news" | "profile"
+type Tab = "agent" | "news" | "records" | "profile"
 
 interface BottomNavProps {
   activeTab: Tab
@@ -11,9 +11,9 @@ interface BottomNavProps {
 }
 
 const navItems: { id: Tab; label: string; icon: typeof FileText }[] = [
-  { id: "records", label: "Records", icon: FileText },
   { id: "agent", label: "Mitra", icon: MessageSquare },
   { id: "news", label: "News", icon: Newspaper },
+  { id: "records", label: "History", icon: FileText },
   { id: "profile", label: "Profile", icon: User },
 ]
 

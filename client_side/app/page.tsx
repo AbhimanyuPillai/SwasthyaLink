@@ -1,54 +1,84 @@
 "use client"
 
-import { useState } from "react"
-import { Activity, Bell, FileText, MessageSquare, Newspaper, User, Menu, X } from "lucide-react"
+import { useState, useEffect } from "react"
+import { Activity, FileText, MessageSquare, Newspaper, User, Menu, X, MapPin, LogOut } from "lucide-react"
 import { BottomNav } from "@/components/bottom-nav"
 import { MedicalRecord } from "@/components/medical-record"
 import { AskAgent } from "@/components/ask-agent"
 import { LocalNews } from "@/components/local-news"
 import { Profile } from "@/components/profile"
+import { LocationModal } from "@/components/location-modal"
 import { cn } from "@/lib/utils"
 
-type Tab = "records" | "agent" | "news" | "profile"
+type Tab = "agent" | "news" | "records" | "profile"
 
 const tabTitles: Record<Tab, string> = {
-  records: "Medical Records",
   agent: "Swasthya Mitra",
   news: "Local News",
+  records: "Medical History",
   profile: "Profile",
 }
 
 const sidebarItems: { id: Tab; label: string; icon: typeof FileText }[] = [
-  { id: "records", label: "Medical Records", icon: FileText },
   { id: "agent", label: "Swasthya Mitra", icon: MessageSquare },
   { id: "news", label: "Local News", icon: Newspaper },
+  { id: "records", label: "Medical History", icon: FileText },
   { id: "profile", label: "Profile", icon: User },
 ]
 
 export default function SwasthyaLinkDashboard() {
-  const [activeTab, setActiveTab] = useState<Tab>("records")
+  const [activeTab, setActiveTab] = useState<Tab>("agent")
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [locationModalOpen, setLocationModalOpen] = useState(false)
+
+  // Open location modal on first mount (simulating new session)
+  useEffect(() => {
+    const hasSetLocation = sessionStorage.getItem("swasthya-location-set")
+    if (!hasSetLocation) {
+      setLocationModalOpen(true)
+    }
+  }, [])
+
+  const handleLocationSave = () => {
+    sessionStorage.setItem("swasthya-location-set", "true")
+    setLocationModalOpen(false)
+  }
+
+  const openLocationModal = () => {
+    setLocationModalOpen(true)
+  }
 
   const renderContent = () => {
     switch (activeTab) {
-      case "records":
-        return <MedicalRecord />
       case "agent":
         return <AskAgent />
       case "news":
         return <LocalNews />
-      case "profile":
-        return <Profile />
-      default:
+      case "records":
         return <MedicalRecord />
+      case "profile":
+        return <Profile onChangeLocation={openLocationModal} />
+      default:
+        return <AskAgent />
     }
   }
 
   return (
     <div className="min-h-screen bg-background flex">
+      {/* Location Modal */}
+      <LocationModal 
+        isOpen={locationModalOpen} 
+        onClose={() => setLocationModalOpen(false)}
+        onSave={handleLocationSave}
+      />
+
       {/* Desktop Sidebar */}
       <aside className="hidden lg:flex lg:flex-col lg:w-56 lg:fixed lg:inset-y-0 bg-sidebar text-sidebar-foreground border-r border-sidebar-border">
-        <div className="p-3 border-b border-sidebar-border">
+        {/* Clickable Logo - navigates to Swasthya Mitra */}
+        <button 
+          onClick={() => setActiveTab("agent")}
+          className="p-3 border-b border-sidebar-border hover:bg-sidebar-accent/50 transition-colors text-left"
+        >
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-md bg-sidebar-accent flex items-center justify-center">
               <Activity className="h-4 w-4 text-sidebar-accent-foreground" />
@@ -58,7 +88,7 @@ export default function SwasthyaLinkDashboard() {
               <p className="text-[10px] text-sidebar-foreground/70">Health Portal</p>
             </div>
           </div>
-        </div>
+        </button>
 
         <nav className="flex-1 p-2">
           <ul className="space-y-0.5">
@@ -84,7 +114,11 @@ export default function SwasthyaLinkDashboard() {
           </ul>
         </nav>
 
-        <div className="p-3 border-t border-sidebar-border">
+        {/* Clickable Profile Card - navigates to Profile tab */}
+        <button 
+          onClick={() => setActiveTab("profile")}
+          className="p-3 border-t border-sidebar-border hover:bg-sidebar-accent/50 transition-colors text-left"
+        >
           <div className="flex items-center gap-2">
             <img
               src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=40&h=40&fit=crop&crop=face"
@@ -96,7 +130,7 @@ export default function SwasthyaLinkDashboard() {
               <p className="text-[10px] text-sidebar-foreground/60 truncate">SWID-MH-2024-08521</p>
             </div>
           </div>
-        </div>
+        </button>
       </aside>
 
       {/* Mobile Sidebar Overlay */}
@@ -115,7 +149,13 @@ export default function SwasthyaLinkDashboard() {
         )}
       >
         <div className="p-3 border-b border-sidebar-border flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <button 
+            onClick={() => {
+              setActiveTab("agent")
+              setSidebarOpen(false)
+            }}
+            className="flex items-center gap-2"
+          >
             <div className="w-8 h-8 rounded-md bg-sidebar-accent flex items-center justify-center">
               <Activity className="h-4 w-4 text-sidebar-accent-foreground" />
             </div>
@@ -123,7 +163,7 @@ export default function SwasthyaLinkDashboard() {
               <h1 className="text-sm font-bold">Swasthya Link</h1>
               <p className="text-[10px] text-sidebar-foreground/70">Health Portal</p>
             </div>
-          </div>
+          </button>
           <button
             onClick={() => setSidebarOpen(false)}
             className="p-1.5 rounded-md hover:bg-sidebar-accent transition-colors"
@@ -158,13 +198,34 @@ export default function SwasthyaLinkDashboard() {
             })}
           </ul>
         </nav>
+
+        {/* Clickable Profile Card in Mobile Sidebar */}
+        <button 
+          onClick={() => {
+            setActiveTab("profile")
+            setSidebarOpen(false)
+          }}
+          className="p-3 border-t border-sidebar-border hover:bg-sidebar-accent/50 transition-colors text-left w-full"
+        >
+          <div className="flex items-center gap-2">
+            <img
+              src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=40&h=40&fit=crop&crop=face"
+              alt="User avatar"
+              className="w-7 h-7 rounded-full object-cover"
+            />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium truncate">Priya Sharma</p>
+              <p className="text-[10px] text-sidebar-foreground/60 truncate">SWID-MH-2024-08521</p>
+            </div>
+          </div>
+        </button>
       </aside>
 
       {/* Main Content Area */}
       <div className="flex-1 lg:ml-56">
         {/* Header */}
         <header className="sticky top-0 z-40 bg-primary text-primary-foreground">
-          <div className="flex items-center justify-between px-3 py-2.5 max-w-3xl mx-auto lg:px-4">
+          <div className="flex items-center justify-between px-3 py-2.5 lg:px-4">
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setSidebarOpen(true)}
@@ -172,27 +233,38 @@ export default function SwasthyaLinkDashboard() {
               >
                 <Menu className="h-4 w-4" />
               </button>
-              <div className="flex items-center gap-2 lg:hidden">
+              {/* Clickable Logo in Header (mobile) */}
+              <button 
+                onClick={() => setActiveTab("agent")}
+                className="flex items-center gap-2 lg:hidden"
+              >
                 <div className="w-7 h-7 rounded-md bg-primary-foreground/20 flex items-center justify-center">
                   <Activity className="h-3.5 w-3.5" />
                 </div>
-                <div>
+                <div className="text-left">
                   <h1 className="text-sm font-bold tracking-tight">Swasthya Link</h1>
                   <p className="text-[10px] text-primary-foreground/80">Government Health Portal</p>
                 </div>
-              </div>
+              </button>
               <div className="hidden lg:block">
                 <h1 className="text-base font-semibold">{tabTitles[activeTab]}</h1>
               </div>
             </div>
-            <button className="relative p-1.5 rounded-md bg-primary-foreground/10 hover:bg-primary-foreground/20 transition-colors">
-              <Bell className="h-4 w-4" />
-              <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-accent rounded-full" />
+            <button 
+              className="p-1.5 rounded-md bg-primary-foreground/10 hover:bg-primary-foreground/20 transition-colors flex items-center gap-1.5 text-xs"
+              onClick={() => {
+                // Clear session and reload
+                sessionStorage.clear()
+                window.location.reload()
+              }}
+            >
+              <LogOut className="h-4 w-4" />
+              <span className="hidden sm:inline">Logout</span>
             </button>
           </div>
 
           {activeTab !== "agent" && (
-            <div className="px-3 pb-2 max-w-3xl mx-auto lg:hidden">
+            <div className="px-3 pb-2 lg:hidden">
               <h2 className="text-base font-semibold">{tabTitles[activeTab]}</h2>
             </div>
           )}
@@ -201,10 +273,9 @@ export default function SwasthyaLinkDashboard() {
         {/* Main Content */}
         <main
           className={cn(
-            "max-w-3xl mx-auto",
             activeTab === "agent" 
-              ? "h-[calc(100vh-56px-52px)] lg:h-[calc(100vh-48px)]" 
-              : "px-3 pt-4 pb-16 lg:px-4 lg:pb-6"
+              ? "h-[calc(100vh-48px-52px)] lg:h-[calc(100vh-48px)]" 
+              : "max-w-3xl mx-auto px-3 pt-4 pb-16 lg:px-4 lg:pb-6"
           )}
         >
           {renderContent()}
