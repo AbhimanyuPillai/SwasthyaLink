@@ -1,16 +1,15 @@
-import { initializeApp, getApps, getApp } from "firebase/app";
+import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDPHmyJzWBxpTgT7yWcjQ5nZsK9CT_66CA",
-  authDomain: "swasthyalink-371ad.firebaseapp.com",
-  projectId: "swasthyalink-371ad",
-  storageBucket: "swasthyalink-371ad.firebasestorage.app",
-  messagingSenderId: "865166032383",
-  appId: "1:865166032383:web:03a11e22a4756d33267bca"
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID
 };
 
-// NEXT.JS FIX: Check if an app is already running before starting a new one!
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
