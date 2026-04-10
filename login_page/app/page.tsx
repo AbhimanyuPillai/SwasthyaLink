@@ -71,6 +71,8 @@ export default function AuthPage() {
     fullName: "", dob: "", gender: "", bloodGroup: "", email: "",
     mobile: "", emergencyContact: "", height: "", weight: "", healthConcerns: [],
   })
+  const [profilePhoto, setProfilePhoto] = useState<File | null>(null)
+  const [profilePhotoPreviewUrl, setProfilePhotoPreviewUrl] = useState<string | null>(null)
 
   const otpRefs = [
     useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null),
@@ -171,6 +173,46 @@ export default function AuthPage() {
       await confirmationResult.confirm(otpString)
       
       if (authMode === "register") {
+        // Register user in backend, then upload photo (optional)
+        const calculatedAge = calculateAge(formData.dob)
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000"
+
+        const registerPayload = {
+          mobile_number: formData.mobile.replace(/\D/g, "").slice(-10),
+          name: formData.fullName,
+          age: calculatedAge ?? 0,
+          height: Number(formData.height || 0),
+          weight: Number(formData.weight || 0),
+          location: "Pune, Maharashtra",
+        }
+
+        const regRes = await fetch(`${backendUrl}/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(registerPayload),
+        })
+
+        if (!regRes.ok) {
+          const msg = await regRes.text()
+          throw new Error(msg || "Registration failed")
+        }
+
+        let user = await regRes.json()
+
+        if (profilePhoto) {
+          const fd = new FormData()
+          fd.append("photo", profilePhoto)
+          const photoRes = await fetch(`${backendUrl}/users/${user.id}/photo`, {
+            method: "POST",
+            body: fd,
+          })
+          if (photoRes.ok) {
+            user = await photoRes.json()
+          }
+        }
+
+        // Persist for dashboard/profile
+        sessionStorage.setItem("swasthya-user", JSON.stringify(user))
         setAuthState("success")
       } else {
         alert("Login successful! Redirecting to dashboard...")
@@ -293,6 +335,10 @@ export default function AuthPage() {
                       onHealthConcernToggle={handleHealthConcernToggle}
                       onSendOtp={() => handleSendOtp(formData.mobile)}
                       isLoading={isLoading}
+                      profilePhoto={profilePhoto}
+                      setProfilePhoto={setProfilePhoto}
+                      profilePhotoPreviewUrl={profilePhotoPreviewUrl}
+                      setProfilePhotoPreviewUrl={setProfilePhotoPreviewUrl}
                     />
                   )}
                 </div>
@@ -474,7 +520,7 @@ function calculateAge(dob: string): number | null {
   return age >= 0 ? age : null
 }
 
-function RegisterForm({ formData, setFormData, healthConcernOptions, onHealthConcernToggle, onSendOtp, isLoading }: any) {
+function RegisterForm({ formData, setFormData, healthConcernOptions, onHealthConcernToggle, onSendOtp, isLoading, profilePhoto, setProfilePhoto, profilePhotoPreviewUrl, setProfilePhotoPreviewUrl }: any) {
   const updateField = (field: keyof FormData, value: string) => {
     setFormData((prev: any) => ({ ...prev, [field]: value }))
   }
@@ -484,6 +530,37 @@ function RegisterForm({ formData, setFormData, healthConcernOptions, onHealthCon
 
   return (
     <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-2">
+      <div className="border border-border rounded-lg p-4 space-y-4">
+        <div className="flex items-center gap-2 text-primary font-semibold text-sm">
+          <User className="w-4 h-4" /> Profile Photo
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="w-16 h-20 rounded border-2 border-border overflow-hidden bg-muted flex items-center justify-center flex-shrink-0">
+            {profilePhotoPreviewUrl ? (
+              <img src={profilePhotoPreviewUrl} alt="Selected profile" className="w-full h-full object-cover" />
+            ) : (
+              <User className="w-8 h-8 text-muted-foreground" />
+            )}
+          </div>
+          <div className="flex-1">
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                const file = e.target.files?.[0] || null
+                setProfilePhoto(file)
+                if (profilePhotoPreviewUrl) URL.revokeObjectURL(profilePhotoPreviewUrl)
+                setProfilePhotoPreviewUrl(file ? URL.createObjectURL(file) : null)
+              }}
+              className="block w-full text-xs"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">
+              JPG/PNG/WEBP. This will appear on your Swasthya Card.
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div className="border border-border rounded-lg p-4 space-y-4">
         <div className="flex items-center gap-2 text-primary font-semibold text-sm">
           <User className="w-4 h-4" /> Personal Information
@@ -647,6 +724,10 @@ function OtpVerification({ otp, otpRefs, onOtpChange, onOtpKeyDown, onVerify, on
 function SuccessScreen({ formData, onProceed }: any) {
   const swasthyaId = "SL-" + Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase()
   const calculatedAge = calculateAge(formData.dob)
+  const storedUser = typeof window !== "undefined" ? sessionStorage.getItem("swasthya-user") : null
+  const user = storedUser ? JSON.parse(storedUser) : null
+  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000"
+  const photoUrl = user?.photo_url ? `${backendUrl}${user.photo_url}` : null
 
   return (
     <div className="p-6 space-y-6">
@@ -676,8 +757,12 @@ function SuccessScreen({ formData, onProceed }: any) {
         </div>
 
         <div className="flex gap-4">
-          <div className="w-20 h-24 bg-primary-foreground/20 rounded-lg flex items-center justify-center flex-shrink-0">
-            <User className="w-10 h-10 opacity-50" />
+          <div className="w-20 h-24 bg-primary-foreground/20 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden">
+            {photoUrl ? (
+              <img src={photoUrl} alt={formData.fullName || "Profile"} className="w-full h-full object-cover" />
+            ) : (
+              <User className="w-10 h-10 opacity-50" />
+            )}
           </div>
           <div className="flex-1 space-y-1.5 text-xs">
             <div>

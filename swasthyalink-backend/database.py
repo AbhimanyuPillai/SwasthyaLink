@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, text
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
 # Create the SQLite database locally
@@ -23,6 +23,7 @@ class UserDB(Base):
     height = Column(Float)
     weight = Column(Float)
     location = Column(String)
+    photo_url = Column(String, nullable=True)
 
     # Links a user to their medical records/triage reports
     records = relationship("TriageRecordDB", back_populates="patient")
@@ -42,3 +43,19 @@ class TriageRecordDB(Base):
 
 # This automatically creates the tables in the database file when you run the app
 Base.metadata.create_all(bind=engine)
+
+
+def _ensure_user_photo_url_column():
+    """
+    Minimal SQLite migration: add users.photo_url if missing.
+    Keeps dev experience simple without Alembic.
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(text("PRAGMA table_info(users)")).fetchall()
+        existing_cols = {row[1] for row in rows}  # row[1] = column name
+        if "photo_url" not in existing_cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN photo_url VARCHAR"))
+            conn.commit()
+
+
+_ensure_user_photo_url_column()

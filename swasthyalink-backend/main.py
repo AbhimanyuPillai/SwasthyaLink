@@ -1,7 +1,10 @@
 import os
+import uuid
+from pathlib import Path
 from dotenv import load_dotenv
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 import database
 import schemas
@@ -25,6 +28,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+BASE_DIR = Path(__file__).resolve().parent
+UPLOAD_DIR = BASE_DIR / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# Serve uploaded images at /uploads/<filename>
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 # Dependency: Opens a database session for a request, then closes it when done
 def get_db():
@@ -53,7 +63,8 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
         age=user.age,
         height=user.height,
         weight=user.weight,
-        location=user.location
+        location=user.location,
+        photo_url=user.photo_url
     )
     
     # Save to the database
@@ -62,6 +73,50 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     db.refresh(new_user)
     
     return new_user
+
+
+@app.get("/users/{user_id}", response_model=schemas.UserResponse)
+def get_user(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(database.UserDB).filter(database.UserDB.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+@app.post("/users/{user_id}/photo", response_model=schemas.UserResponse)
+def upload_user_photo(
+    user_id: int,
+    photo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    user = db.query(database.UserDB).filter(database.UserDB.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not photo.content_type or not photo.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image uploads are allowed")
+
+    ext = Path(photo.filename or "").suffix.lower()
+    if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
+        # keep it strict to avoid serving unexpected content-types
+        raise HTTPException(status_code=400, detail="Supported formats: jpg, jpeg, png, webp")
+
+    filename = f"user_{user_id}_{uuid.uuid4().hex}{ext}"
+    dest_path = UPLOAD_DIR / filename
+
+    # Stream to disk
+    with dest_path.open("wb") as out:
+        while True:
+            chunk = photo.file.read(1024 * 1024)
+            if not chunk:
+                break
+            out.write(chunk)
+
+    user.photo_url = f"/uploads/{filename}"
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 @app.post("/chat", response_model=schemas.TriageRecordResponse)
 def triage_chat(chat_request: schemas.ChatRequest, db: Session = Depends(get_db)):

@@ -11,6 +11,7 @@ class UserCreate(BaseModel):
     height: float
     weight: float
     location: str
+    photo_url: Optional[str] = None
 
 # Schema for the data going TO the frontend when returning a user
 class UserResponse(UserCreate):

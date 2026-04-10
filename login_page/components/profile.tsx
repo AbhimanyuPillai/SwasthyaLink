@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   User,
   Phone,
@@ -26,7 +26,7 @@ interface ProfileProps {
   onChangeLocation?: () => void
 }
 
-const profileData = {
+const fallbackProfileData = {
   name: "Priya Sharma",
   swasthyaId: "SWID-MH-2024-08521",
   email: "priya.sharma@email.com",
@@ -38,7 +38,7 @@ const profileData = {
   emergencyContact: {
     name: "Raj Sharma",
     phone: "+91 98765 43211",
-    relation: "Spouse"
+    relation: "Spouse",
   },
   avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&h=150&fit=crop&crop=face",
 }
@@ -47,6 +47,28 @@ type ModalType = "info" | "help" | "emergency" | null
 
 export function Profile({ onChangeLocation }: ProfileProps) {
   const [activeModal, setActiveModal] = useState<ModalType>(null)
+  const [storedUser, setStoredUser] = useState<any>(null)
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("swasthya-user")
+      setStoredUser(raw ? JSON.parse(raw) : null)
+    } catch {
+      setStoredUser(null)
+    }
+  }, [])
+
+  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000"
+  const profileData = useMemo(() => {
+    if (!storedUser) return fallbackProfileData
+    return {
+      ...fallbackProfileData,
+      name: storedUser.name ?? fallbackProfileData.name,
+      phone: storedUser.mobile_number ? `+91 ${storedUser.mobile_number}` : fallbackProfileData.phone,
+      location: storedUser.location ?? fallbackProfileData.location,
+      avatar: storedUser.photo_url ? `${backendUrl}${storedUser.photo_url}` : fallbackProfileData.avatar,
+    }
+  }, [storedUser, backendUrl])
 
   return (
     <div className="space-y-3">

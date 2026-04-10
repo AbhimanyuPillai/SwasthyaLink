@@ -31,12 +31,28 @@ export default function SwasthyaLinkDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>("agent")
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [locationModalOpen, setLocationModalOpen] = useState(false)
+  const [userAvatar, setUserAvatar] = useState<string>("https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=40&h=40&fit=crop&crop=face")
+  const [userName, setUserName] = useState<string>("Priya Sharma")
+  const [userIdDisplay, setUserIdDisplay] = useState<string>("SWID-MH-2024-08521")
 
   // Open location modal on first mount (simulating new session)
   useEffect(() => {
     const hasSetLocation = sessionStorage.getItem("swasthya-location-set")
     if (!hasSetLocation) {
       setLocationModalOpen(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("swasthya-user")
+      const storedUser = raw ? JSON.parse(raw) : null
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000"
+      if (storedUser?.photo_url) setUserAvatar(`${backendUrl}${storedUser.photo_url}`)
+      if (storedUser?.name) setUserName(storedUser.name)
+      if (storedUser?.id) setUserIdDisplay(`SL-${storedUser.id}`)
+    } catch {
+      // ignore
     }
   }, [])
 
@@ -122,13 +138,13 @@ export default function SwasthyaLinkDashboard() {
         >
           <div className="flex items-center gap-2">
             <img
-              src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=40&h=40&fit=crop&crop=face"
+              src={userAvatar}
               alt="User avatar"
               className="w-7 h-7 rounded-full object-cover"
             />
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium truncate">Priya Sharma</p>
-              <p className="text-[10px] text-sidebar-foreground/60 truncate">SWID-MH-2024-08521</p>
+              <p className="text-xs font-medium truncate">{userName}</p>
+              <p className="text-[10px] text-sidebar-foreground/60 truncate">{userIdDisplay}</p>
             </div>
           </div>
         </button>
@@ -210,13 +226,13 @@ export default function SwasthyaLinkDashboard() {
         >
           <div className="flex items-center gap-2">
             <img
-              src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=40&h=40&fit=crop&crop=face"
+              src={userAvatar}
               alt="User avatar"
               className="w-7 h-7 rounded-full object-cover"
             />
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium truncate">Priya Sharma</p>
-              <p className="text-[10px] text-sidebar-foreground/60 truncate">SWID-MH-2024-08521</p>
+              <p className="text-xs font-medium truncate">{userName}</p>
+              <p className="text-[10px] text-sidebar-foreground/60 truncate">{userIdDisplay}</p>
             </div>
           </div>
         </button>
