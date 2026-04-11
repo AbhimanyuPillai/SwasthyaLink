@@ -1,0 +1,792 @@
+"use client"
+
+import { useState, useRef, useEffect, useMemo } from "react"
+import { auth, db, storage } from "@/lib/firebase"
+import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from "firebase/auth"
+import { doc, setDoc, serverTimestamp, query, where, getDocs, collection } from "firebase/firestore"
+import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage"
+import {
+  IdCard,
+  Smartphone,
+  QrCode,
+  User,
+  Calendar,
+  Droplets,
+  Mail,
+  Phone,
+  AlertCircle,
+  Ruler,
+  Scale,
+  CheckCircle2,
+  ArrowRight,
+  Shield,
+  Heart,
+} from "lucide-react"
+import { useRouter } from "next/navigation" 
+// (Make sure it's next/navigation, NOT next/router!)
+
+declare global {
+  interface Window {
+    recaptchaVerifier?: any
+    confirmationResult?: ConfirmationResult
+  }
+}
+
+type AuthMode = "login" | "register"
+type LoginMethod = "swasthya-id" | "mobile" | "qr"
+type AuthState = "initial" | "otp"
+
+interface FormData {
+  fullName: string
+  dob: string
+  gender: string
+  bloodGroup: string
+  email: string
+  mobile: string
+  emergencyContact: string
+  height: string
+  weight: string
+  healthConcerns: string[]
+}
+
+const healthConcernOptions = [
+  "Diabetes",
+  "Hypertension (BP)",
+  "Migraine",
+  "Asthma",
+  "Thyroid",
+  "None",
+]
+
+export default function AuthPage() {
+  const router = useRouter()
+  const [authMode, setAuthMode] = useState<AuthMode>("login")
+  const [loginMethod, setLoginMethod] = useState<LoginMethod>("swasthya-id")
+  const [authState, setAuthState] = useState<AuthState>("initial")
+  const [loginInput, setLoginInput] = useState("")
+  const [otp, setOtp] = useState(["", "", "", "", "", ""]) 
+  
+  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [authError, setAuthError] = useState<string | null>(null)
+
+  const [formData, setFormData] = useState<FormData>({
+    fullName: "", dob: "", gender: "", bloodGroup: "", email: "",
+    mobile: "", emergencyContact: "", height: "", weight: "", healthConcerns: [],
+  })
+  const [profilePhoto, setProfilePhoto] = useState<File | null>(null)
+  const [profilePhotoPreviewUrl, setProfilePhotoPreviewUrl] = useState<string | null>(null)
+
+  const otpRefs = [
+    useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null),
+    useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null),
+    useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null),
+  ]
+
+  const handleOtpChange = (index: number, value: string) => {
+    if (value.length <= 1 && /^\d*$/.test(value)) {
+      setAuthError(null)
+      const newOtp = [...otp]
+      newOtp[index] = value
+      setOtp(newOtp)
+      if (value && index < 5) {
+        otpRefs[index + 1].current?.focus()
+      }
+    }
+  }
+
+  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent) => {
+    if (e.key === "Backspace" && !otp[index] && index > 0) {
+      otpRefs[index - 1].current?.focus()
+    }
+  }
+
+  const handleHealthConcernToggle = (concern: string) => {
+    if (concern === "None") {
+      setFormData((prev) => ({
+        ...prev,
+        healthConcerns: prev.healthConcerns.includes("None") ? [] : ["None"],
+      }))
+    } else {
+      setFormData((prev) => ({
+        ...prev,
+        healthConcerns: prev.healthConcerns.includes(concern)
+          ? prev.healthConcerns.filter((c) => c !== concern)
+          : [...prev.healthConcerns.filter((c) => c !== "None"), concern],
+      }))
+    }
+  }
+
+  const resetToInitial = () => {
+    setAuthState("initial")
+    setOtp(["", "", "", "", "", ""]) 
+    setLoginInput("")
+    setConfirmationResult(null)
+    window.confirmationResult = undefined
+    setAuthError(null)
+  }
+
+  const switchAuthMode = (mode: AuthMode) => {
+    setAuthMode(mode)
+    resetToInitial()
+  }
+
+  useEffect(() => {
+    if (authState === "otp") {
+      otpRefs[0].current?.focus()
+    }
+  }, [authState])
+
+  // --- FIREBASE LOGIC ---
+  const handleSendOtp = async (input: string) => {
+    if (!input || input.trim().length === 0) {
+      setAuthError("Please provide a valid Swasthya ID or mobile number.")
+      return
+    }
+
+    let phoneToUse = input;
+    setAuthError(null)
+    setIsLoading(true)
+
+    try {
+      // Logic for Dual Login: Handle Swasthya ID
+      if (authMode === "login" && loginMethod === "swasthya-id") {
+        const q = query(collection(db, "users"), where("swasthya_id", "==", input));
+        const querySnapshot = await getDocs(q);
+        
+        if (querySnapshot.empty) {
+          throw new Error("Swasthya ID not found. Please register or check your ID.");
+        }
+        
+        const userData = querySnapshot.docs[0].data();
+        phoneToUse = userData.phone || userData.mobile_number;
+        
+        if (!phoneToUse) {
+          throw new Error("No phone number associated with this Swasthya ID.");
+        }
+      }
+
+      if (!phoneToUse || phoneToUse.length < 10) {
+        throw new Error("Invalid mobile number detected.");
+      }
+      if (window.recaptchaVerifier) {
+        window.recaptchaVerifier.clear()
+        window.recaptchaVerifier = undefined as any
+      }
+      
+      const container = document.getElementById("recaptcha-container")
+      if (container) container.innerHTML = ""
+
+      window.recaptchaVerifier = new RecaptchaVerifier(auth, "recaptcha-container", { size: "invisible" })
+      const formattedPhone = phoneToUse.startsWith("+91") ? phoneToUse : `+91${phoneToUse.replace(/\D/g, '').slice(-10)}`
+      
+      const confirmation = await signInWithPhoneNumber(auth, formattedPhone, window.recaptchaVerifier)
+      setConfirmationResult(confirmation)
+      window.confirmationResult = confirmation
+      setAuthState("otp")
+      
+    } catch (error: any) {
+      console.error("SMS Error:", error)
+      setAuthError(error.message || "Failed to send OTP. Please try again.")
+      if (window.recaptchaVerifier) {
+        window.recaptchaVerifier.clear()
+        window.recaptchaVerifier = undefined as any
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleVerifyOtp = async () => {
+    const otpString = otp.join("")
+    const confirmation = window.confirmationResult ?? confirmationResult
+    if (otpString.length !== 6 || !confirmation) return
+
+    setAuthError(null)
+    setIsLoading(true)
+    try {
+      const credential = await confirmation.confirm(otpString)
+      const firebaseUser = credential.user
+      
+      if (authMode === "register") {
+        const calculatedAge = calculateAge(formData.dob)
+        const conditions = formData.healthConcerns.filter((c) => c !== "None")
+
+        let photoUrl: string | null = null
+        if (profilePhoto) {
+          try {
+            const pref = storageRef(storage, `profile_photos/${firebaseUser.uid}`)
+            await uploadBytes(pref, profilePhoto)
+            photoUrl = await getDownloadURL(pref)
+          } catch (e) {
+            console.error("Profile photo upload failed:", e)
+          }
+        }
+
+        // 1. Swasthya ID Generation
+        const currentYear = new Date().getFullYear();
+        const randomDigits = Math.floor(1000 + Math.random() * 9000);
+        const generatedSwasthyaId = `SW-${currentYear}-${randomDigits}`;
+
+        await setDoc(doc(db, "users", firebaseUser.uid), {
+          full_name: formData.fullName,
+          email: formData.email,
+          phone: firebaseUser.phoneNumber ?? formData.mobile,
+          blood_group: formData.bloodGroup,
+          dob: formData.dob,
+          gender: formData.gender,
+          emergency_contact: formData.emergencyContact,
+          height_cm: Number(formData.height) || 0,
+          weight_kg: Number(formData.weight) || 0,
+          conditions,
+          location: "Pune, Maharashtra",
+          photo_url: photoUrl,
+          swasthya_id: generatedSwasthyaId,
+          created_at: serverTimestamp(),
+        })
+
+        const sessionUser = {
+          uid: firebaseUser.uid,
+          name: formData.fullName,
+          full_name: formData.fullName,
+          email: formData.email,
+          mobile_number: formData.mobile.replace(/\D/g, "").slice(-10),
+          gender: formData.gender,
+          blood_group: formData.bloodGroup,
+          dob: formData.dob,
+          emergency_contact: formData.emergencyContact,
+          height_cm: Number(formData.height) || 0,
+          weight_kg: Number(formData.weight) || 0,
+          conditions,
+          location: "Pune, Maharashtra",
+          photo_url: photoUrl,
+          swasthya_id: generatedSwasthyaId,
+          age: calculatedAge ?? undefined,
+        }
+        sessionStorage.setItem("swasthya-user", JSON.stringify(sessionUser))
+        router.replace("/dashboard")
+      } else {
+        router.replace("/dashboard")
+      }
+    } catch (error) {
+      setAuthError("Incorrect OTP. Please try again.")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  return (
+    <main className="min-h-screen flex flex-col lg:flex-row">
+      {/* Left Panel - Blurred Healthcare Background with Logo */}
+      <div className="lg:w-1/2 relative flex items-center justify-center p-8 lg:p-12 min-h-[200px] lg:min-h-screen overflow-hidden">
+        {/* Background image with blur */}
+        <div 
+          className="absolute inset-0 bg-cover bg-center"
+          style={{
+            backgroundImage: `url("/healthcare-bg.jpg")`,
+            filter: "blur(6px)",
+            transform: "scale(1.1)",
+          }}
+        />
+        {/* Dark overlay for better contrast */}
+        <div className="absolute inset-0 bg-navy/70" />
+        
+        <div className="relative z-10 text-center">
+          <div className="inline-flex flex-col items-center gap-4">
+            {/* Logo image */}
+            <div className="w-28 h-28 lg:w-36 lg:h-36 bg-white rounded-2xl flex items-center justify-center shadow-lg p-3">
+              <img 
+                src="/swasthyalink-logo.png" 
+                alt="Swasthya Link Logo" 
+                className="w-full h-full object-contain"
+              />
+            </div>
+            <div>
+              <h1 className="text-3xl lg:text-4xl font-bold text-white tracking-tight">Swasthya Link</h1>
+              {/* Saffron accent line */}
+              <div className="w-16 h-1 bg-saffron mx-auto mt-3 mb-3 rounded-full" />
+              <p className="text-sm lg:text-base text-white/80 tracking-wide">Your Digital Health Companion</p>
+            </div>
+          </div>
+          
+          {/* Additional decorative elements for desktop */}
+          <div className="hidden lg:block mt-12 space-y-4 text-white/70 text-sm">
+            <div className="flex items-center justify-center gap-2">
+              <Shield className="w-4 h-4" />
+              <span>Secure & Encrypted</span>
+            </div>
+            <div className="flex items-center justify-center gap-2">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Your Health, Connected</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Right Panel - White with Auth Card */}
+      <div className="lg:w-1/2 bg-background flex items-center justify-center p-4 lg:p-8 flex-1">
+        <div className="w-full max-w-md">
+          <div className="bg-card rounded-xl shadow-lg border border-border overflow-hidden relative">
+            
+            {/* FIREBASE RECAPTCHA */}
+            <div id="recaptcha-container"></div>
+
+            {authState === "initial" && authError && (
+              <div className="px-4 pt-3">
+                <p className="text-xs text-destructive text-center rounded-md border border-destructive/25 bg-destructive/10 px-3 py-2">
+                  {authError}
+                </p>
+              </div>
+            )}
+
+            <div className="flex border-b border-border">
+                  <button
+                    type="button"
+                    onClick={() => switchAuthMode("login")}
+                    className={`flex-1 py-4 text-sm font-semibold transition-colors ${
+                      authMode === "login" ? "text-primary border-b-2 border-primary bg-muted/30" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Login
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => switchAuthMode("register")}
+                    className={`flex-1 py-4 text-sm font-semibold transition-colors ${
+                      authMode === "register" ? "text-primary border-b-2 border-primary bg-muted/30" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Register
+                  </button>
+                </div>
+
+                <div className="p-6">
+                  {authState === "otp" ? (
+                    <OtpVerification
+                      otp={otp}
+                      otpRefs={otpRefs}
+                      onOtpChange={handleOtpChange}
+                      onOtpKeyDown={handleOtpKeyDown}
+                      onVerify={handleVerifyOtp}
+                      onBack={resetToInitial}
+                      isRegistration={authMode === "register"}
+                      isLoading={isLoading}
+                      errorMessage={authState === "otp" ? authError : null}
+                    />
+                  ) : authMode === "login" ? (
+                    <LoginForm
+                      loginMethod={loginMethod}
+                      setLoginMethod={setLoginMethod}
+                      loginInput={loginInput}
+                      setLoginInput={setLoginInput}
+                      onGetOtp={() => handleSendOtp(loginInput)}
+                      isLoading={isLoading}
+                    />
+                  ) : (
+                    <RegisterForm
+                      formData={formData}
+                      setFormData={setFormData}
+                      healthConcernOptions={healthConcernOptions}
+                      onHealthConcernToggle={handleHealthConcernToggle}
+                      onSendOtp={() => handleSendOtp(formData.mobile)}
+                      isLoading={isLoading}
+                      profilePhoto={profilePhoto}
+                      setProfilePhoto={setProfilePhoto}
+                      profilePhotoPreviewUrl={profilePhotoPreviewUrl}
+                      setProfilePhotoPreviewUrl={setProfilePhotoPreviewUrl}
+                    />
+                  )}
+                </div>
+          </div>
+
+          <div className="mt-6 text-center">
+            <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+              <Shield className="w-3.5 h-3.5" />
+              <span>Your data is secure and encrypted</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  )
+}
+
+function LoginForm({ loginMethod, setLoginMethod, loginInput, setLoginInput, onGetOtp, isLoading }: any) {
+  const [isCameraOpen, setIsCameraOpen] = useState(false)
+  const [cameraError, setCameraError] = useState("")
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
+    setIsCameraOpen(false)
+  }
+
+  const handleScanQrClick = async () => {
+    if (isCameraOpen) {
+      stopCamera()
+      return
+    }
+
+    setCameraError("")
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Camera is not supported on this browser.")
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      })
+
+      streamRef.current = stream
+      setIsCameraOpen(true)
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        await videoRef.current.play()
+      }
+    } catch (error) {
+      setCameraError("Unable to access camera. Please allow camera permission and try again.")
+      console.error("Camera error:", error)
+      stopCamera()
+    }
+  }
+
+  useEffect(() => {
+    if (loginMethod !== "qr") {
+      stopCamera()
+      setCameraError("")
+    }
+  }, [loginMethod])
+
+  useEffect(() => {
+    return () => {
+      stopCamera()
+    }
+  }, [])
+
+  return (
+    <div className="space-y-6">
+      <div className="flex gap-2">
+        {[
+          { id: "swasthya-id", icon: IdCard, label: "Swasthya ID" },
+          { id: "mobile", icon: Smartphone, label: "Mobile" },
+          { id: "qr", icon: QrCode, label: "Scan QR" },
+        ].map(({ id, icon: Icon, label }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setLoginMethod(id as LoginMethod)}
+            className={`flex-1 flex flex-col items-center gap-1.5 py-3 px-2 rounded-lg border transition-all ${
+              loginMethod === id ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:border-primary/50"
+            }`}
+          >
+            <Icon className="w-5 h-5" />
+            <span className="text-xs font-medium">{label}</span>
+          </button>
+        ))}
+      </div>
+
+      {loginMethod === "qr" ? (
+        <div className="space-y-4">
+          <div className="aspect-square max-w-[200px] mx-auto border-2 border-dashed border-primary/30 rounded-lg flex items-center justify-center bg-muted/20">
+            {isCameraOpen ? (
+              <video ref={videoRef} autoPlay muted playsInline className="w-full h-full rounded-lg object-cover" />
+            ) : (
+              <div className="text-center p-4">
+                <div className="relative">
+                  <div className="w-32 h-32 relative">
+                    <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-primary rounded-tl" />
+                    <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-primary rounded-tr" />
+                    <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-primary rounded-bl" />
+                    <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-primary rounded-br" />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <QrCode className="w-12 h-12 text-muted-foreground" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={handleScanQrClick}
+            className="w-full py-3 bg-saffron text-saffron-foreground font-semibold rounded-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+          >
+            <QrCode className="w-4 h-4" /> {isCameraOpen ? "Stop Scan" : "Tap to Scan"}
+          </button>
+          {cameraError && <p className="text-xs text-destructive text-center">{cameraError}</p>}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-2">
+              {loginMethod === "swasthya-id" ? "Enter your Swasthya ID" : "Enter your Mobile Number"}
+            </label>
+            <div className="relative">
+              <input
+                type={loginMethod === "mobile" ? "tel" : "text"}
+                value={loginInput}
+                onChange={(e) => setLoginInput(e.target.value)}
+                placeholder={loginMethod === "swasthya-id" ? "XX-XXXX-XXXX-XXXX" : "+91 XXXXX XXXXX"}
+                className="w-full px-4 py-3 border border-input rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
+              />
+              {loginMethod === "mobile" ? (
+                <Smartphone className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+              ) : (
+                <IdCard className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onGetOtp}
+            disabled={!loginInput || isLoading}
+            className="w-full py-3 bg-success text-success-foreground font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {isLoading ? "Sending..." : "Get OTP"}
+            {!isLoading && <ArrowRight className="w-4 h-4" />}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Helper function to calculate age from DOB
+function calculateAge(dob: string): number | null {
+  if (!dob) return null
+  const birthDate = new Date(dob)
+  const today = new Date()
+  let age = today.getFullYear() - birthDate.getFullYear()
+  const monthDiff = today.getMonth() - birthDate.getMonth()
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+    age--
+  }
+  return age >= 0 ? age : null
+}
+
+function RegisterForm({ formData, setFormData, healthConcernOptions, onHealthConcernToggle, onSendOtp, isLoading, profilePhoto, setProfilePhoto, profilePhotoPreviewUrl, setProfilePhotoPreviewUrl }: any) {
+  const updateField = (field: keyof FormData, value: string) => {
+    setFormData((prev: any) => ({ ...prev, [field]: value }))
+  }
+
+  // Auto-calculate age from DOB
+  const calculatedAge = useMemo(() => calculateAge(formData.dob), [formData.dob])
+
+  return (
+    <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-2">
+      <div className="border border-border rounded-lg p-4 space-y-4">
+        <div className="flex items-center gap-2 text-primary font-semibold text-sm">
+          <User className="w-4 h-4" /> Profile Photo
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="w-16 h-20 rounded border-2 border-border overflow-hidden bg-muted flex items-center justify-center flex-shrink-0">
+            {profilePhotoPreviewUrl ? (
+              <img src={profilePhotoPreviewUrl} alt="Selected profile" className="w-full h-full object-cover" />
+            ) : (
+              <User className="w-8 h-8 text-muted-foreground" />
+            )}
+          </div>
+          <div className="flex-1">
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                const file = e.target.files?.[0] || null
+                setProfilePhoto(file)
+                if (profilePhotoPreviewUrl) URL.revokeObjectURL(profilePhotoPreviewUrl)
+                setProfilePhotoPreviewUrl(file ? URL.createObjectURL(file) : null)
+              }}
+              className="block w-full text-xs"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">
+              JPG/PNG/WEBP. This will appear on your Swasthya Card.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="border border-border rounded-lg p-4 space-y-4">
+        <div className="flex items-center gap-2 text-primary font-semibold text-sm">
+          <User className="w-4 h-4" /> Personal Information
+        </div>
+        <div className="grid gap-4">
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5">Full Name</label>
+            <input type="text" value={formData.fullName} onChange={(e) => updateField("fullName", e.target.value)} placeholder="Enter your full name" className="w-full px-3 py-2.5 border border-input rounded-lg bg-background text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5"><Calendar className="w-3 h-3 inline mr-1" />Date of Birth</label>
+            <input type="date" value={formData.dob} onChange={(e) => updateField("dob", e.target.value)} className="w-full px-3 py-2.5 border border-input rounded-lg bg-background text-sm" />
+            {calculatedAge !== null && (
+              <p className="text-xs text-muted-foreground mt-1.5">Age: {calculatedAge} years</p>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Gender</label>
+              <select value={formData.gender} onChange={(e) => updateField("gender", e.target.value)} className="w-full px-3 py-2.5 border border-input rounded-lg bg-background text-sm">
+                <option value="">Select</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5"><Droplets className="w-3 h-3 inline mr-1" />Blood Group</label>
+              <select value={formData.bloodGroup} onChange={(e) => updateField("bloodGroup", e.target.value)} className="w-full px-3 py-2.5 border border-input rounded-lg bg-background text-sm">
+                <option value="">Select</option>
+                <option value="A+">A+</option><option value="A-">A-</option><option value="B+">B+</option><option value="B-">B-</option>
+                <option value="AB+">AB+</option><option value="AB-">AB-</option><option value="O+">O+</option><option value="O-">O-</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="border border-border rounded-lg p-4 space-y-4">
+        <div className="flex items-center gap-2 text-primary font-semibold text-sm">
+          <Phone className="w-4 h-4" /> Contact Information
+        </div>
+        <div className="grid gap-4">
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5"><Mail className="w-3 h-3 inline mr-1" />Email Address</label>
+            <input type="email" value={formData.email} onChange={(e) => updateField("email", e.target.value)} placeholder="your@email.com" className="w-full px-3 py-2.5 border border-input rounded-lg bg-background text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5">Mobile Number</label>
+            <input type="tel" value={formData.mobile} onChange={(e) => updateField("mobile", e.target.value)} placeholder="+91 XXXXX XXXXX" className="w-full px-3 py-2.5 border border-input rounded-lg bg-background text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5"><AlertCircle className="w-3 h-3 inline mr-1" />Emergency Contact Number</label>
+            <input type="tel" value={formData.emergencyContact} onChange={(e) => updateField("emergencyContact", e.target.value)} placeholder="+91 XXXXX XXXXX" className="w-full px-3 py-2.5 border border-input rounded-lg bg-background text-sm" />
+          </div>
+        </div>
+      </div>
+
+      <div className="border border-border rounded-lg p-4 space-y-4">
+        <div className="flex items-center gap-2 text-primary font-semibold text-sm">
+          <Heart className="w-4 h-4" /> Health & Vitals
+        </div>
+        <div className="grid gap-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5"><Ruler className="w-3 h-3 inline mr-1" />Height (cm)</label>
+              <input type="number" value={formData.height} onChange={(e) => updateField("height", e.target.value)} placeholder="170" className="w-full px-3 py-2.5 border border-input rounded-lg bg-background text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5"><Scale className="w-3 h-3 inline mr-1" />Weight (kg)</label>
+              <input type="number" value={formData.weight} onChange={(e) => updateField("weight", e.target.value)} placeholder="65" className="w-full px-3 py-2.5 border border-input rounded-lg bg-background text-sm" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-2">Major Health Concerns</label>
+            <div className="grid grid-cols-2 gap-2">
+              {healthConcernOptions.map((concern: string) => (
+                <div
+                  key={concern}
+                  role="checkbox"
+                  aria-checked={formData.healthConcerns.includes(concern)}
+                  tabIndex={0}
+                  onClick={() => onHealthConcernToggle(concern)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault()
+                      onHealthConcernToggle(concern)
+                    }
+                  }}
+                  className={`flex items-center gap-2 p-2.5 border rounded-lg cursor-pointer transition-all text-sm select-none ${formData.healthConcerns.includes(concern) ? "border-primary bg-primary/5 text-primary" : "border-input hover:border-primary/50"}`}
+                >
+                  <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors flex-shrink-0 ${formData.healthConcerns.includes(concern) ? "bg-primary border-primary" : "border-input"}`}>
+                    {formData.healthConcerns.includes(concern) && <CheckCircle2 className="w-3 h-3 text-primary-foreground" />}
+                  </div>
+                  <span className="text-xs">{concern}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={onSendOtp}
+        disabled={!formData.fullName || !formData.mobile || isLoading}
+        className="w-full py-3 bg-success text-success-foreground font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
+      >
+        {isLoading ? "Sending..." : "Send OTP"}
+        {!isLoading && <ArrowRight className="w-4 h-4" />}
+      </button>
+    </div>
+  )
+}
+
+function OtpVerification({
+  otp,
+  otpRefs,
+  onOtpChange,
+  onOtpKeyDown,
+  onVerify,
+  onBack,
+  isRegistration,
+  isLoading,
+  errorMessage,
+}: any) {
+  return (
+    <div className="space-y-6 text-center">
+      <div>
+        <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+          <Smartphone className="w-8 h-8 text-primary" />
+        </div>
+        <h3 className="text-lg font-semibold text-foreground mb-1">OTP Verification</h3>
+        <p className="text-sm text-muted-foreground">Enter the 6-digit code sent to your mobile</p>
+      </div>
+
+      {errorMessage && (
+        <p className="text-xs text-destructive rounded-md border border-destructive/25 bg-destructive/10 px-3 py-2 mx-auto max-w-sm">
+          {errorMessage}
+        </p>
+      )}
+
+      <div className="flex justify-center gap-2">
+        {otp.map((digit: string, index: number) => (
+          <input
+            key={index}
+            ref={otpRefs[index]}
+            type="text"
+            inputMode="numeric"
+            maxLength={1}
+            value={digit}
+            onChange={(e) => onOtpChange(index, e.target.value)}
+            onKeyDown={(e) => onOtpKeyDown(index, e)}
+            className="w-12 h-12 text-center text-xl font-bold border-2 border-input rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary transition-all"
+          />
+        ))}
+      </div>
+
+      <div className="space-y-3">
+        <button
+          type="button"
+          onClick={onVerify}
+          disabled={otp.some((d: string) => !d) || isLoading}
+          className="w-full py-3 bg-success text-success-foreground font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {isLoading ? "Verifying..." : (isRegistration ? "Verify & Register" : "Verify & Login")}
+          {!isLoading && <CheckCircle2 className="w-4 h-4" />}
+        </button>
+        <button type="button" onClick={onBack} className="w-full py-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          Back
+        </button>
+      </div>
+    </div>
+  )
+}
+
