@@ -1,8 +1,11 @@
 "use client"
 
 import { useState, useRef, useEffect, useMemo } from "react"
-import { auth } from "@/lib/firebase"
+import { auth, db, storage } from "@/lib/firebase"
 import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from "firebase/auth"
+import { doc, setDoc, serverTimestamp } from "firebase/firestore"
+import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage"
+import { resolveAssetUrl } from "@/lib/backend"
 import {
   IdCard,
   Smartphone,
@@ -26,7 +29,8 @@ import { useRouter } from "next/navigation"
 
 declare global {
   interface Window {
-    recaptchaVerifier: any;
+    recaptchaVerifier?: any
+    confirmationResult?: ConfirmationResult
   }
 }
 
@@ -118,6 +122,7 @@ export default function AuthPage() {
     setOtp(["", "", "", "", "", ""]) 
     setLoginInput("")
     setConfirmationResult(null)
+    window.confirmationResult = undefined
   }
 
   const switchAuthMode = (mode: AuthMode) => {
@@ -150,6 +155,7 @@ export default function AuthPage() {
       
       const confirmation = await signInWithPhoneNumber(auth, formattedPhone, window.recaptchaVerifier)
       setConfirmationResult(confirmation)
+      window.confirmationResult = confirmation
       setAuthState("otp")
       
     } catch (error) {
@@ -166,53 +172,63 @@ export default function AuthPage() {
 
   const handleVerifyOtp = async () => {
     const otpString = otp.join("")
-    if (otpString.length !== 6 || !confirmationResult) return
+    const confirmation = window.confirmationResult ?? confirmationResult
+    if (otpString.length !== 6 || !confirmation) return
     
     setIsLoading(true)
     try {
-      await confirmationResult.confirm(otpString)
+      const credential = await confirmation.confirm(otpString)
+      const firebaseUser = credential.user
       
       if (authMode === "register") {
-        // Register user in backend, then upload photo (optional)
         const calculatedAge = calculateAge(formData.dob)
-        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000"
+        const conditions = formData.healthConcerns.filter((c) => c !== "None")
 
-        const registerPayload = {
-          mobile_number: formData.mobile.replace(/\D/g, "").slice(-10),
-          name: formData.fullName,
-          age: calculatedAge ?? 0,
-          height: Number(formData.height || 0),
-          weight: Number(formData.weight || 0),
-          location: "Pune, Maharashtra",
-        }
-
-        const regRes = await fetch(`${backendUrl}/register`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(registerPayload),
-        })
-
-        if (!regRes.ok) {
-          const msg = await regRes.text()
-          throw new Error(msg || "Registration failed")
-        }
-
-        let user = await regRes.json()
-
+        let photoUrl: string | null = null
         if (profilePhoto) {
-          const fd = new FormData()
-          fd.append("photo", profilePhoto)
-          const photoRes = await fetch(`${backendUrl}/users/${user.id}/photo`, {
-            method: "POST",
-            body: fd,
-          })
-          if (photoRes.ok) {
-            user = await photoRes.json()
+          try {
+            const pref = storageRef(storage, `profile_photos/${firebaseUser.uid}`)
+            await uploadBytes(pref, profilePhoto)
+            photoUrl = await getDownloadURL(pref)
+          } catch (e) {
+            console.error("Profile photo upload failed:", e)
           }
         }
 
-        // Persist for dashboard/profile
-        sessionStorage.setItem("swasthya-user", JSON.stringify(user))
+        await setDoc(doc(db, "users", firebaseUser.uid), {
+          full_name: formData.fullName,
+          email: formData.email,
+          phone: firebaseUser.phoneNumber ?? formData.mobile,
+          blood_group: formData.bloodGroup,
+          dob: formData.dob,
+          gender: formData.gender,
+          emergency_contact: formData.emergencyContact,
+          height_cm: Number(formData.height) || 0,
+          weight_kg: Number(formData.weight) || 0,
+          conditions,
+          location: "Pune, Maharashtra",
+          photo_url: photoUrl,
+          created_at: serverTimestamp(),
+        })
+
+        const sessionUser = {
+          uid: firebaseUser.uid,
+          name: formData.fullName,
+          full_name: formData.fullName,
+          email: formData.email,
+          mobile_number: formData.mobile.replace(/\D/g, "").slice(-10),
+          gender: formData.gender,
+          blood_group: formData.bloodGroup,
+          dob: formData.dob,
+          emergency_contact: formData.emergencyContact,
+          height_cm: Number(formData.height) || 0,
+          weight_kg: Number(formData.weight) || 0,
+          conditions,
+          location: "Pune, Maharashtra",
+          photo_url: photoUrl,
+          age: calculatedAge ?? undefined,
+        }
+        sessionStorage.setItem("swasthya-user", JSON.stringify(sessionUser))
         setAuthState("success")
       } else {
         alert("Login successful! Redirecting to dashboard...")
@@ -726,8 +742,7 @@ function SuccessScreen({ formData, onProceed }: any) {
   const calculatedAge = calculateAge(formData.dob)
   const storedUser = typeof window !== "undefined" ? sessionStorage.getItem("swasthya-user") : null
   const user = storedUser ? JSON.parse(storedUser) : null
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000"
-  const photoUrl = user?.photo_url ? `${backendUrl}${user.photo_url}` : null
+  const photoUrl = resolveAssetUrl(user?.photo_url)
 
   return (
     <div className="p-6 space-y-6">

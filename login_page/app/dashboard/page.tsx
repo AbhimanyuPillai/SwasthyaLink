@@ -10,6 +10,7 @@ import { LocalNews } from "@/components/local-news"
 import { Profile } from "@/components/profile"
 import { LocationModal } from "@/components/location-modal"
 import { cn } from "@/lib/utils"
+import { resolveAssetUrl } from "@/lib/backend"
 
 type Tab = "agent" | "news" | "records" | "profile"
 
@@ -47,10 +48,16 @@ export default function SwasthyaLinkDashboard() {
     try {
       const raw = sessionStorage.getItem("swasthya-user")
       const storedUser = raw ? JSON.parse(raw) : null
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000"
-      if (storedUser?.photo_url) setUserAvatar(`${backendUrl}${storedUser.photo_url}`)
-      if (storedUser?.name) setUserName(storedUser.name)
-      if (storedUser?.id) setUserIdDisplay(`SL-${storedUser.id}`)
+      const avatarUrl = resolveAssetUrl(storedUser?.photo_url)
+      if (avatarUrl) setUserAvatar(avatarUrl)
+      if (storedUser?.full_name || storedUser?.name) {
+        setUserName(storedUser.full_name ?? storedUser.name)
+      }
+      if (storedUser?.uid) {
+        setUserIdDisplay(`SL-${String(storedUser.uid).slice(0, 8).toUpperCase()}`)
+      } else if (storedUser?.id) {
+        setUserIdDisplay(`SL-${storedUser.id}`)
+      }
     } catch {
       // ignore
     }

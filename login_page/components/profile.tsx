@@ -21,6 +21,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { resolveAssetUrl } from "@/lib/backend"
 
 interface ProfileProps {
   onChangeLocation?: () => void
@@ -58,17 +59,17 @@ export function Profile({ onChangeLocation }: ProfileProps) {
     }
   }, [])
 
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000"
   const profileData = useMemo(() => {
     if (!storedUser) return fallbackProfileData
+    const resolved = resolveAssetUrl(storedUser.photo_url)
     return {
       ...fallbackProfileData,
-      name: storedUser.name ?? fallbackProfileData.name,
+      name: storedUser.full_name ?? storedUser.name ?? fallbackProfileData.name,
       phone: storedUser.mobile_number ? `+91 ${storedUser.mobile_number}` : fallbackProfileData.phone,
       location: storedUser.location ?? fallbackProfileData.location,
-      avatar: storedUser.photo_url ? `${backendUrl}${storedUser.photo_url}` : fallbackProfileData.avatar,
+      avatar: resolved ?? fallbackProfileData.avatar,
     }
-  }, [storedUser, backendUrl])
+  }, [storedUser])
 
   return (
     <div className="space-y-3">

@@ -1,30 +1,38 @@
+import json
 import os
-import uuid
 from pathlib import Path
+from typing import Optional
+
+import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy.orm import Session
-import database
-import schemas
-import json
-import requests
 
-# 1. Load environment variables from the .env file
+import schemas
+
 load_dotenv()
 
-# 2. Grab the API key securely. Fails fast if it's missing!
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("CRITICAL: No API key found. Please check your .env file.")
 
 app = FastAPI(title="SwasthyaLink API")
 
+# CORS: set ALLOWED_ORIGINS to a comma-separated list (e.g. your Vercel URL) for credentialed
+# browser requests. If unset, all origins are allowed without credentials (typical for simple JSON fetch).
+_allowed_raw = os.getenv("ALLOWED_ORIGINS", "").strip()
+if _allowed_raw:
+    _allow_origins = [o.strip() for o in _allowed_raw.split(",") if o.strip()]
+    _allow_credentials = True
+else:
+    _allow_origins = ["*"]
+    _allow_credentials = False
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_allow_origins,
+    allow_credentials=_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -32,112 +40,52 @@ app.add_middleware(
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-# Serve uploaded images at /uploads/<filename>
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
-# Dependency: Opens a database session for a request, then closes it when done
-def get_db():
-    db = database.SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 @app.get("/")
 def read_root():
     return {"status": "Server is running", "message": "Welcome to SwasthyaLink Core"}
 
-# ENDPOINT: Register a user
-@app.post("/register", response_model=schemas.UserResponse)
-def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    # Check if a user with this mobile number already exists
-    db_user = db.query(database.UserDB).filter(database.UserDB.mobile_number == user.mobile_number).first()
-    if db_user:
-        raise HTTPException(status_code=400, detail="Mobile number already registered")
-    
-    # Create the new user
-    new_user = database.UserDB(
-        mobile_number=user.mobile_number,
-        name=user.name,
-        age=user.age,
-        height=user.height,
-        weight=user.weight,
-        location=user.location,
-        photo_url=user.photo_url
-    )
-    
-    # Save to the database
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    
-    return new_user
+
+def _patient_context_block(patient: Optional[schemas.PatientProfile]) -> str:
+    if not patient:
+        return "Patient profile: not provided; use general adult guidance for Pune, Maharashtra."
+    parts = []
+    if patient.age is not None:
+        parts.append(f"Age {patient.age}")
+    if patient.gender:
+        parts.append(f"Gender {patient.gender}")
+    if patient.weight_kg is not None:
+        parts.append(f"Weight {patient.weight_kg} kg")
+    if patient.height_cm is not None:
+        parts.append(f"Height {patient.height_cm} cm")
+    if patient.location:
+        parts.append(f"Location {patient.location}")
+    else:
+        parts.append("Location Pune, Maharashtra (default)")
+    if patient.conditions:
+        parts.append(f"Known conditions / concerns: {', '.join(patient.conditions)}")
+    return "Patient profile: " + "; ".join(parts) + "."
 
 
-@app.get("/users/{user_id}", response_model=schemas.UserResponse)
-def get_user(user_id: int, db: Session = Depends(get_db)):
-    user = db.query(database.UserDB).filter(database.UserDB.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
+@app.post("/chat", response_model=schemas.TriageAssessment)
+def triage_chat(chat_request: schemas.ChatRequest):
+    patient = chat_request.patient
+    profile_line = _patient_context_block(patient)
 
-
-@app.post("/users/{user_id}/photo", response_model=schemas.UserResponse)
-def upload_user_photo(
-    user_id: int,
-    photo: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
-    user = db.query(database.UserDB).filter(database.UserDB.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    if not photo.content_type or not photo.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Only image uploads are allowed")
-
-    ext = Path(photo.filename or "").suffix.lower()
-    if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
-        # keep it strict to avoid serving unexpected content-types
-        raise HTTPException(status_code=400, detail="Supported formats: jpg, jpeg, png, webp")
-
-    filename = f"user_{user_id}_{uuid.uuid4().hex}{ext}"
-    dest_path = UPLOAD_DIR / filename
-
-    # Stream to disk
-    with dest_path.open("wb") as out:
-        while True:
-            chunk = photo.file.read(1024 * 1024)
-            if not chunk:
-                break
-            out.write(chunk)
-
-    user.photo_url = f"/uploads/{filename}"
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
-
-@app.post("/chat", response_model=schemas.TriageRecordResponse)
-def triage_chat(chat_request: schemas.ChatRequest, db: Session = Depends(get_db)):
-    # 1. Fetch the user's profile from the database
-    user = db.query(database.UserDB).filter(database.UserDB.id == chat_request.user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # 2. The Strict System Prompt (Context-Aware & Differential Upgraded)
     system_prompt = f"""
     You are SwasthyaLink, a highly advanced, pre-clinical AI triage medical assistant specifically designed for the city of Pune, Maharashtra.
     Your primary directive is to analyze patient symptoms, cross-reference them with the patient's biological profile, and output a highly structured, accurate, and safe preliminary medical assessment.
 
     CRITICAL INSTRUCTIONS & CONSTRAINTS:
     1. Base your analysis STRICTLY on the symptoms provided. Do not invent symptoms.
-    2. Factor in the patient's specific profile: Age {user.age}, Weight {user.weight}kg, Location {user.location}. 
+    2. Factor in the patient's specific profile. {profile_line}
     3. Consider the current local context (Pune epidemiology).
     4. MULTIPLE PROBABILITIES: Do not provide a single definitive diagnosis. Provide the most statistically likely condition first, followed by other probable considerations in parentheses.
     5. Provide exactly 3 Actionable Care/Caution Points (maximum 5-7 words per point). Point 3 MUST always be a variation of "Doctor must confirm final diagnosis."
     6. Identify the exact medical specialist the patient needs to see (e.g., General Physician, Pulmonologist, Cardiologist).
-    
+
     OUTPUT STRICTLY IN JSON FORMAT. DO NOT ADD ANY CONVERSATIONAL TEXT.
     Format exactly like this:
     {{
@@ -146,61 +94,39 @@ def triage_chat(chat_request: schemas.ChatRequest, db: Session = Depends(get_db)
         "recommended_specialist": "Exact Doctor Specialty"
     }}
     """
-    
-    # 3. Call the Gemini API using the secure key from .env
-    API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={GEMINI_API_KEY}"
-    headers = {
-        "Content-Type": "application/json"
-    }
-    
+
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={GEMINI_API_KEY}"
+    headers = {"Content-Type": "application/json"}
     payload = {
-        "system_instruction": {
-            "parts": [{"text": system_prompt}]
-        },
+        "system_instruction": {"parts": [{"text": system_prompt}]},
         "contents": [
             {
                 "role": "user",
-                "parts": [{"text": f"Patient Symptoms: {chat_request.symptoms}"}]
+                "parts": [{"text": f"Patient Symptoms: {chat_request.symptoms}"}],
             }
         ],
         "generationConfig": {
             "temperature": 0.2,
-            "responseMimeType": "application/json" 
-        }
+            "responseMimeType": "application/json",
+        },
     }
 
     try:
-        # Send the request to Gemini
-        response = requests.post(API_URL, headers=headers, json=payload)
-        response.raise_for_status() # Check for HTTP errors
-        
-        # Parse the AI's response (Gemini's JSON structure)
+        response = requests.post(api_url, headers=headers, json=payload, timeout=60)
+        response.raise_for_status()
         ai_output = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-        
-        # Convert the string output into a Python dictionary
         triage_data = json.loads(ai_output)
-
     except Exception as e:
-        # FAILSAFE: If the API is down or throws a CORS error during judging, output a simulated response
         print(f"API Error: {e}")
         triage_data = {
             "probable_ailment": "Simulated Ailment (API Offline)",
             "care_points": "1. Rest. 2. Hydrate. 3. Seek local clinic.",
-            "recommended_specialist": "General Physician"
+            "recommended_specialist": "General Physician",
         }
 
-    # 4. Save the Triage Report to the Database (Populates Tab 1)
-    new_triage_record = database.TriageRecordDB(
-        user_id=user.id,
+    return schemas.TriageAssessment(
         symptoms=chat_request.symptoms,
         probable_ailment=triage_data["probable_ailment"],
         care_points=triage_data["care_points"],
-        recommended_specialist=triage_data["recommended_specialist"]
+        recommended_specialist=triage_data["recommended_specialist"],
     )
-        
-    db.add(new_triage_record)
-    db.commit()
-    db.refresh(new_triage_record)
-    
-    # 5. Return the exact response to the frontend
-    return new_triage_record

@@ -1,102 +1,137 @@
-"use client"; // Required for hooks like useRouter
+"use client";
 
 import { useState } from "react";
 import { auth, db } from "../lib/firebase";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
-import type { ConfirmationResult } from "firebase/auth";
+import { RecaptchaVerifier, signInWithPhoneNumber, type ConfirmationResult } from "firebase/auth";
 import { useRouter } from "next/navigation";
 
 declare global {
-    interface Window {
-        confirmationResult?: ConfirmationResult;
-    }
+  interface Window {
+    confirmationResult?: ConfirmationResult
+    recaptchaVerifier?: any
+  }
 }
 
 const RegisterComponent = () => {
-    const router = useRouter();
+  const router = useRouter();
 
-    // 1. FORM STATE (Make sure these match your Input fields)
-    const [formData, setFormData] = useState({
-        fullName: "",
-        email: "",
-        dob: "",
-        gender: "",
-        bloodGroup: "",
-        mobileNumber: "",
-        emergencyContact: "",
-        height: "",
-        weight: "",
-    });
+  const [formData, setFormData] = useState({
+    fullName: "",
+    email: "",
+    dob: "",
+    gender: "",
+    bloodGroup: "",
+    mobileNumber: "",
+    emergencyContact: "",
+    height: "",
+    weight: "",
+  });
 
-    // State for the OTP process
-    const [otpCode, setOtpCode] = useState("");
-    const [confirmationResult, setConfirmationResult] = useState<any>(null);
+  const [otpCode, setOtpCode] = useState("");
 
-    // 2. THE OTP VERIFICATION FUNCTION
-// 2. THE OTP VERIFICATION FUNCTION
-const verifyOtp = async () => {
-    // Change: Use window instead of the state variable
+  const verifyOtp = async () => {
     if (!window.confirmationResult) return alert("Please request OTP first");
 
     try {
-        // A. Confirm OTP with Firebase
-        const result = await window.confirmationResult.confirm(otpCode);
-        const user = result.user;
+      const result = await window.confirmationResult.confirm(otpCode);
+      const user = result.user;
 
-        console.log("OTP Verified. User UID:", user.uid);
+      await setDoc(doc(db, "users", user.uid), {
+        full_name: formData.fullName,
+        email: formData.email,
+        phone: user.phoneNumber,
+        blood_group: formData.bloodGroup,
+        dob: formData.dob,
+        gender: formData.gender,
+        emergency_contact: formData.emergencyContact,
+        height_cm: Number(formData.height),
+        weight_kg: Number(formData.weight),
+        conditions: [],
+        created_at: serverTimestamp(),
+      });
 
-        // B. Save Health Vault to Firestore
-        await setDoc(doc(db, "users", user.uid), {
-            full_name: formData.fullName,
-            email: formData.email,
-            phone: user.phoneNumber, 
-            blood_group: formData.bloodGroup,
-            dob: formData.dob,
-            gender: formData.gender,
-            emergency_contact: formData.emergencyContact,
-            height_cm: Number(formData.height),
-            weight_kg: Number(formData.weight),
-            conditions: [],
-            created_at: serverTimestamp()
-        });
-
-        console.log("Health Vault created successfully!");
-        router.push("/dashboard");
-
-    } catch (error: any) {
-        console.error("Registration failed:", error.code);
-        alert("Verification failed: " + error.message);
+      router.push("/dashboard");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      console.error("Registration failed:", error);
+      alert("Verification failed: " + message);
     }
-};
+  };
 
-    return (
-        <div className="flex flex-col gap-4 p-8" >
-            <h1 className="text-2xl font-bold" > Register Health Vault </h1>
+  const sendOtp = async () => {
+    if (!formData.mobileNumber || formData.mobileNumber.length < 10) {
+      alert("Please enter a valid mobile number");
+      return;
+    }
 
-            {/* Input Example: Full Name */}
-            <input
-                placeholder="Full Name"
-                value={formData.fullName}
-                onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
-                className="border p-2 rounded"
-            />
+    try {
+      if (window.recaptchaVerifier) {
+        window.recaptchaVerifier.clear();
+        window.recaptchaVerifier = undefined;
+      }
+      const container = document.getElementById("recaptcha-container-register");
+      if (container) container.innerHTML = "";
 
-            {/* OTP Input (Shown only after sending OTP) */}
-            <input
-                placeholder="Enter 6-digit OTP"
-                value={otpCode}
-                onChange={(e) => setOtpCode(e.target.value)}
-                className="border p-2 rounded"
-            />
+      window.recaptchaVerifier = new RecaptchaVerifier(auth, "recaptcha-container-register", {
+        size: "invisible",
+      });
+      const formatted = formData.mobileNumber.startsWith("+91")
+        ? formData.mobileNumber
+        : `+91${formData.mobileNumber.replace(/\D/g, "").slice(-10)}`;
 
-            <button
-                onClick={verifyOtp}
-                className="bg-blue-600 text-white p-2 rounded hover:bg-blue-700"
-            >
-                Verify & Register
-            </button>
-        </div>
-    );
+      const confirmation = await signInWithPhoneNumber(auth, formatted, window.recaptchaVerifier);
+      window.confirmationResult = confirmation;
+      alert("OTP sent");
+    } catch (error) {
+      console.error("SMS Error:", error);
+      alert("Failed to send OTP.");
+      if (window.recaptchaVerifier) {
+        window.recaptchaVerifier.clear();
+        window.recaptchaVerifier = undefined;
+      }
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4 p-8">
+      <div id="recaptcha-container-register" />
+      <h1 className="text-2xl font-bold">Register Health Vault</h1>
+
+      <input
+        placeholder="Full Name"
+        value={formData.fullName}
+        onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+        className="border p-2 rounded"
+      />
+
+      <input
+        placeholder="Mobile (+91)"
+        value={formData.mobileNumber}
+        onChange={(e) => setFormData({ ...formData, mobileNumber: e.target.value })}
+        className="border p-2 rounded"
+      />
+
+      <button type="button" onClick={sendOtp} className="bg-emerald-600 text-white p-2 rounded hover:bg-emerald-700">
+        Send OTP
+      </button>
+
+      <input
+        placeholder="Enter 6-digit OTP"
+        value={otpCode}
+        onChange={(e) => setOtpCode(e.target.value)}
+        className="border p-2 rounded"
+      />
+
+      <button
+        type="button"
+        onClick={verifyOtp}
+        className="bg-blue-600 text-white p-2 rounded hover:bg-blue-700"
+      >
+        Verify & Register
+      </button>
+    </div>
+  );
 };
 
 export default RegisterComponent;

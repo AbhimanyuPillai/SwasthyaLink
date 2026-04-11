@@ -4,6 +4,36 @@ import React, { useState, useRef, useEffect } from "react"
 import { Send, Bot, User, Sparkles, ImagePlus, AlertTriangle, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { BACKEND_URL } from "@/lib/backend"
+
+function patientPayloadFromSession() {
+  if (typeof window === "undefined") return undefined
+  try {
+    const raw = sessionStorage.getItem("swasthya-user")
+    if (!raw) return undefined
+    const u = JSON.parse(raw) as Record<string, unknown>
+    return {
+      age: typeof u.age === "number" ? u.age : undefined,
+      gender: typeof u.gender === "string" ? u.gender : undefined,
+      weight_kg:
+        typeof u.weight_kg === "number"
+          ? u.weight_kg
+          : typeof u.weight === "number"
+            ? u.weight
+            : undefined,
+      height_cm:
+        typeof u.height_cm === "number"
+          ? u.height_cm
+          : typeof u.height === "number"
+            ? u.height
+            : undefined,
+      location: typeof u.location === "string" ? u.location : "Pune, Maharashtra",
+      conditions: Array.isArray(u.conditions) ? (u.conditions as string[]) : [],
+    }
+  } catch {
+    return undefined
+  }
+}
 
 interface Message {
   id: string
@@ -97,14 +127,15 @@ export function AskAgent() {
     setIsTyping(true)
 
     try {
-      const response = await fetch("https://swasthyalink-pythonapi.onrender.com/chat", {
+      const patient = patientPayloadFromSession()
+      const response = await fetch(`${BACKEND_URL}/chat`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          user_id: 1,
           symptoms,
+          ...(patient ? { patient } : {}),
         }),
       })
 

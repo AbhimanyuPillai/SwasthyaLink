@@ -1,39 +1,27 @@
 from pydantic import BaseModel
 from typing import Optional, List
 
-# --- PYDANTIC SCHEMAS (How data comes in and goes out of the API) ---
 
-# Schema for the data coming FROM the frontend when registering
-class UserCreate(BaseModel):
-    mobile_number: str
-    name: str
-    age: int
-    height: float
-    weight: float
-    location: str
-    photo_url: Optional[str] = None
+class PatientProfile(BaseModel):
+    """Health context sent by the client (e.g. from Firestore); all fields optional."""
 
-# Schema for the data going TO the frontend when returning a user
-class UserResponse(UserCreate):
-    id: int
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    weight_kg: Optional[float] = None
+    height_cm: Optional[float] = None
+    location: Optional[str] = None
+    conditions: Optional[List[str]] = None
 
-    class Config:
-        from_attributes = True
 
-# Schema for creating a new triage record
-class TriageRecordCreate(BaseModel):
+class ChatRequest(BaseModel):
+    symptoms: str
+    patient: Optional[PatientProfile] = None
+
+
+class TriageAssessment(BaseModel):
+    """Structured triage output returned to the client (not persisted on the server)."""
+
     symptoms: str
     probable_ailment: str
     care_points: str
     recommended_specialist: str
-
-class TriageRecordResponse(TriageRecordCreate):
-    id: int
-    user_id: int
-
-    class Config:
-        from_attributes = True
-
-class ChatRequest(BaseModel):
-        user_id: int
-        symptoms: str
