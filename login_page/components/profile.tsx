@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState, useRef } from "react"
 import { QRCodeCanvas } from "qrcode.react"
+import { PDFDownloadLink } from "@react-pdf/renderer"
+import { SwasthyaPDF } from "./swasthya-pdf"
 import {
   User,
   Phone,
@@ -41,9 +43,9 @@ const fallbackProfileData = {
   bloodType: "B+",
   gender: "Female",
   emergencyContact: {
-    name: "Raj Sharma",
-    phone: "+91 98765 43211",
-    relation: "Spouse",
+    name: "",
+    phone: "",
+    relation: "",
   },
   avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&h=150&fit=crop&crop=face",
 }
@@ -51,7 +53,6 @@ const fallbackProfileData = {
 type ModalType = "info" | "help" | "emergency" | null
 
 export function Profile({ onChangeLocation, onUpdate }: ProfileProps) {
-  const cardRef = useRef<HTMLDivElement>(null)
   const [activeModal, setActiveModal] = useState<ModalType>(null)
   const [storedUser, setStoredUser] = useState<any>(null)
   
@@ -69,6 +70,39 @@ export function Profile({ onChangeLocation, onUpdate }: ProfileProps) {
   const [ecPhone, setEcPhone] = useState("")
   const [ecRelation, setEcRelation] = useState("")
   const [isSavingEc, setIsSavingEc] = useState(false)
+  const [qrBase64, setQrBase64] = useState<string | null>(null)
+  const qrRef = useRef<HTMLCanvasElement>(null)
+
+  const profileData = useMemo(() => {
+    if (!storedUser) return fallbackProfileData
+    const resolved = resolveAssetUrl(storedUser.photo_url)
+    return {
+      ...fallbackProfileData,
+      name: storedUser.full_name ?? storedUser.name ?? fallbackProfileData.name,
+      email: storedUser.email ?? fallbackProfileData.email,
+      phone: storedUser.mobile_number ? `+91 ${storedUser.mobile_number}` : (storedUser.phone ?? fallbackProfileData.phone),
+      location: storedUser.location ?? fallbackProfileData.location,
+      dob: storedUser.dob ?? fallbackProfileData.dob,
+      bloodType: storedUser.blood_group ?? fallbackProfileData.bloodType,
+      gender: storedUser.gender ?? fallbackProfileData.gender,
+      avatar: resolved ?? fallbackProfileData.avatar,
+      swasthyaId: storedUser.swasthya_id ?? fallbackProfileData.swasthyaId,
+      emergencyContact: {
+        name: storedUser.emergency_contact_name ?? "",
+        phone: storedUser.emergency_contact ?? "",
+        relation: storedUser.emergency_contact_relation ?? "",
+      }
+    }
+  }, [storedUser])
+
+  useEffect(() => {
+    if (qrRef.current && profileData?.swasthyaId) {
+      const timer = setTimeout(() => {
+        setQrBase64(qrRef.current!.toDataURL())
+      }, 500)
+      return () => clearTimeout(timer)
+    }
+  }, [profileData?.swasthyaId])
 
   useEffect(() => {
     const fetchFreshData = async () => {
@@ -109,28 +143,6 @@ export function Profile({ onChangeLocation, onUpdate }: ProfileProps) {
     
     fetchFreshData()
   }, [activeModal])
-
-  const profileData = useMemo(() => {
-    if (!storedUser) return fallbackProfileData
-    const resolved = resolveAssetUrl(storedUser.photo_url)
-    return {
-      ...fallbackProfileData,
-      name: storedUser.full_name ?? storedUser.name ?? fallbackProfileData.name,
-      email: storedUser.email ?? fallbackProfileData.email,
-      phone: storedUser.mobile_number ? `+91 ${storedUser.mobile_number}` : (storedUser.phone ?? fallbackProfileData.phone),
-      location: storedUser.location ?? fallbackProfileData.location,
-      dob: storedUser.dob ?? fallbackProfileData.dob,
-      bloodType: storedUser.blood_group ?? fallbackProfileData.bloodType,
-      gender: storedUser.gender ?? fallbackProfileData.gender,
-      avatar: resolved ?? fallbackProfileData.avatar,
-      swasthyaId: storedUser.swasthya_id ?? fallbackProfileData.swasthyaId,
-      emergencyContact: {
-        name: storedUser.emergency_contact_name ?? "",
-        phone: storedUser.emergency_contact ?? "",
-        relation: storedUser.emergency_contact_relation ?? "",
-      }
-    }
-  }, [storedUser])
 
   const handleSavePersonalInfo = async () => {
     if (!storedUser?.uid) return
@@ -177,41 +189,13 @@ export function Profile({ onChangeLocation, onUpdate }: ProfileProps) {
     }
   }
 
-  const handleDownloadCard = async () => {
-    if (typeof window === "undefined" || !cardRef.current) return;
-    
-    try {
-      // Dynamic imports inside the function to avoid SSR issues with jsPDF/html2canvas
-      const html2canvas = (await import("html2canvas")).default;
-      const { jsPDF } = await import("jspdf");
-
-      const canvas = await html2canvas(cardRef.current, {
-        scale: 3, // High quality for text/QR
-        useCORS: true,
-        backgroundColor: null,
-      });
-
-      const imgData = canvas.toDataURL("image/png");
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "px",
-        format: [canvas.width / 3, canvas.height / 3],
-      });
-
-      pdf.addImage(imgData, "PNG", 0, 0, canvas.width / 3, canvas.height / 3);
-      
-      const fileName = `${profileData.name.toLowerCase().replace(/\s+/g, "_")}_${profileData.swasthyaId.toLowerCase()}.pdf`;
-      pdf.save(fileName);
-    } catch (error) {
-      console.error("PDF generation failed:", error);
-    }
-  };
+  // The handleDownloadCard is now handled by PDFDownloadLink
+  const fileName = `${profileData.name.toLowerCase().replace(/\s+/g, "_")}_${profileData.swasthyaId.toLowerCase()}.pdf`
 
   return (
     <div className="space-y-3">
       {/* Swasthya Card */}
       <Card 
-        ref={cardRef} 
         className="border-2 shadow-md overflow-hidden" 
         style={{ borderColor: "#0F172A4D", backgroundColor: "#FFFFFF" }}
       >
@@ -288,10 +272,11 @@ export function Profile({ onChangeLocation, onUpdate }: ProfileProps) {
                   {profileData.swasthyaId}
                 </p>
               </div>
-              <div className="w-14 h-14 rounded border bg-white p-1 flex items-center justify-center" style={{ borderColor: "#E2E8F0" }}>
+              <div className="w-32 h-32 rounded border bg-white p-2 flex items-center justify-center" style={{ borderColor: "#E2E8F0" }}>
                 <QRCodeCanvas 
+                  ref={qrRef}
                   value={profileData.swasthyaId}
-                  size={56}
+                  size={120}
                   level="H"
                   includeMargin={false}
                 />
@@ -301,14 +286,22 @@ export function Profile({ onChangeLocation, onUpdate }: ProfileProps) {
         </CardContent>
       </Card>
 
-      {/* Download Button */}
-      <Button 
-        onClick={handleDownloadCard}
-        className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium py-2.5 text-xs shadow-sm"
+      {/* Download Button - React PDF */}
+      <PDFDownloadLink
+        document={<SwasthyaPDF data={{ ...profileData, qrCodeBase64: qrBase64 || undefined }} />}
+        fileName={fileName}
+        className="w-full"
       >
-        <Download className="h-3.5 w-3.5 mr-1.5" />
-        Download Swasthya Card
-      </Button>
+        {({ loading }) => (
+          <Button 
+            disabled={loading || !qrBase64}
+            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium py-2.5 text-xs shadow-sm"
+          >
+            <Download className="h-3.5 w-3.5 mr-1.5" />
+            {loading ? "Preparing PDF..." : "Download Swasthya Card"}
+          </Button>
+        )}
+      </PDFDownloadLink>
 
       {/* Action Buttons */}
       <Card className="border bg-card shadow-sm">
