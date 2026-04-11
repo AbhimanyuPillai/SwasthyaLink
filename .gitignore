@@ -1,0 +1,32 @@
+# v0 sandbox internal files
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx-dev-runtime.ts
+.snowflake/
+.v0-trash/
+.vercel/
+next.user-config.*
+
+# Environment variables
+.env*.local
+
+# Common ignores
+node_modules
+.next/
+.DS_Store
+# Security (NEVER push these)
+.env
+
+# Virtual Environments & Caches
+venv/
+__pycache__/
+*.pyc
+
+# Local Database (prevent team merge conflicts)
+*.db
+*.sqlite3
+
+# Node modules (I see this in your screenshot!)
+node_modules/
+
+swasthyalink-backend/serviceAccountKey.json
