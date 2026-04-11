@@ -22,7 +22,7 @@ import {
 
 interface PatientRecordsProps {
   onBack: () => void
-  onViewPatient: () => void
+  onViewPatient: (patient: Patient) => void
 }
 
 type TimeFrame = "today" | "week" | "month" | "quarter" | "year" | "all"
@@ -127,7 +127,7 @@ export function PatientRecords({ onBack, onViewPatient }: PatientRecordsProps) {
 
   const handleViewPatient = (patient: Patient) => {
     setCurrentPatient(patient)
-    onViewPatient()
+    onViewPatient(patient)
   }
 
   const timeFrameOptions = [
@@ -259,6 +259,11 @@ export function PatientRecords({ onBack, onViewPatient }: PatientRecordsProps) {
           </Card>
         ) : (
           <div className="grid gap-4">
+            {/* 
+              // TODO: Import patient JSON and filter 
+              // where patient.assigned_hospital_id === doctor.hospital_id 
+              // Ensure this table strictly displays patients linked to the logged-in doctor.
+            */}
             {uniquePatients.map((visit) => {
               const patientVisits = filteredVisits.filter(
                 (v) => v.patient.id === visit.patient.id

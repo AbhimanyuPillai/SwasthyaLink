@@ -2,6 +2,7 @@
 
 import { useState, useRef } from "react"
 import { usePatient, type MedicalRecord } from "@/lib/patient-context"
+import { addMedicalRecord } from "@/lib/firebase"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -77,13 +78,10 @@ export function AddRecordForm({ onClose }: AddRecordFormProps) {
 
     setIsSubmitting(true)
 
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-
     const newRecord: Omit<MedicalRecord, "id"> = {
       date: new Date().toISOString().split("T")[0],
-      hospitalName: hospital?.name || "Unknown Hospital",
-      doctorName: hospital?.doctorName || "Unknown Doctor",
+      hospitalName: hospital?.hospital_name || "Unknown Hospital",
+      doctorName: hospital?.full_name || "Unknown Doctor",
       symptoms: formData.symptoms,
       diagnosis: formData.diagnosis,
       doctorAdvice: formData.doctorAdvice,
@@ -91,8 +89,16 @@ export function AddRecordForm({ onClose }: AddRecordFormProps) {
     }
 
     if (currentPatient) {
-      addRecord(currentPatient.id, newRecord)
-      setSavedRecord({ ...newRecord, id: `rec-${Date.now()}` })
+      try {
+        const firestoreId = await addMedicalRecord(currentPatient.id, newRecord)
+        // Update local context for immediate UI feedback; it assigns a temporary UI ID internally
+        addRecord(currentPatient.id, newRecord)
+        setSavedRecord({ ...newRecord, id: firestoreId })
+      } catch (err) {
+        setError("Failed to save the record to the remote database.")
+        setIsSubmitting(false)
+        return
+      }
     }
 
     setIsSubmitting(false)
@@ -257,10 +263,10 @@ export function AddRecordForm({ onClose }: AddRecordFormProps) {
             {/* Printable Content - Hidden visually but used for print */}
             <div ref={printRef} className="hidden">
               <div className="header">
-                <h1>{hospital?.name}</h1>
-                <p>{hospital?.address}</p>
-                <p>Phone: {hospital?.phone} | Email: {hospital?.email}</p>
-                <p>Registration: {hospital?.registrationNumber}</p>
+                <h1>{hospital?.hospital_name}</h1>
+                <p>{hospital?.area_zone}</p>
+                <p>Phone: {hospital?.phone} | Hours: {hospital?.operating_hours}</p>
+                <p>ID: {hospital?.hospital_id}</p>
               </div>
 
               <div className="patient-info">
@@ -304,9 +310,9 @@ export function AddRecordForm({ onClose }: AddRecordFormProps) {
                   <p>Digital Healthcare System</p>
                 </div>
                 <div className="signature">
-                  <p className="name">{hospital?.doctorName}</p>
-                  <p>{hospital?.specialization}</p>
-                  <p>{hospital?.name}</p>
+                  <p className="name">{hospital?.full_name}</p>
+                  <p>{hospital?.specialty}</p>
+                  <p>{hospital?.hospital_name}</p>
                 </div>
               </div>
             </div>

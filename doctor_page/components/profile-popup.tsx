@@ -7,7 +7,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { User, Building2, Phone, Mail, Award, LogOut, MapPin, Hash } from "lucide-react"
+import { User, Building2, Phone, Award, LogOut, MapPin, Clock, Map } from "lucide-react"
 
 export function ProfilePopup() {
   const { hospital, logout } = useAuth()
@@ -35,9 +35,9 @@ export function ProfilePopup() {
             </div>
             <div className="flex-1 min-w-0">
               <h3 className="font-bold text-primary-foreground text-lg truncate">
-                {hospital.name}
+                {hospital.hospital_name}
               </h3>
-              <p className="text-sm text-primary-foreground/80">{hospital.doctorName}</p>
+              <p className="text-sm text-primary-foreground/80">{hospital.full_name}</p>
             </div>
           </div>
         </div>
@@ -50,17 +50,7 @@ export function ProfilePopup() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs text-muted-foreground">Specialization</p>
-              <p className="text-sm font-medium text-foreground">{hospital.specialization}</p>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-3 p-3 bg-muted/30 rounded-xl">
-            <div className="w-9 h-9 rounded-lg bg-secondary/20 flex items-center justify-center flex-shrink-0">
-              <Mail className="w-4 h-4 text-secondary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs text-muted-foreground">Email</p>
-              <p className="text-sm font-medium text-foreground truncate">{hospital.email}</p>
+              <p className="text-sm font-medium text-foreground">{hospital.specialty}</p>
             </div>
           </div>
 
@@ -79,20 +69,33 @@ export function ProfilePopup() {
               <MapPin className="w-4 h-4 text-primary" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-xs text-muted-foreground">Address</p>
-              <p className="text-sm font-medium text-foreground">{hospital.address}</p>
+              <p className="text-xs text-muted-foreground">Area Zone</p>
+              <p className="text-sm font-medium text-foreground">{hospital.area_zone}</p>
             </div>
           </div>
 
           <div className="flex items-start gap-3 p-3 bg-gradient-to-r from-secondary/10 to-secondary/5 rounded-xl border border-secondary/20">
             <div className="w-9 h-9 rounded-lg bg-secondary/20 flex items-center justify-center flex-shrink-0">
-              <Hash className="w-4 h-4 text-secondary" />
+              <Clock className="w-4 h-4 text-secondary" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-xs text-muted-foreground">Registration Number</p>
-              <p className="text-sm font-mono font-semibold text-secondary">{hospital.registrationNumber}</p>
+              <p className="text-xs text-muted-foreground">Operating Hours</p>
+              <p className="text-sm font-medium text-secondary">{hospital.operating_hours}</p>
             </div>
           </div>
+          
+          {hospital.google_maps_link && (
+            <div className="flex items-start gap-3 p-3 bg-muted/30 rounded-xl">
+              <div className="w-9 h-9 rounded-lg bg-blue-500/10 flex items-center justify-center flex-shrink-0">
+                <Map className="w-4 h-4 text-blue-500" />
+              </div>
+              <div className="flex-1 min-w-0 flex items-center">
+                <a href={hospital.google_maps_link} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-500 hover:underline">
+                  View on Google Maps
+                </a>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Logout */}

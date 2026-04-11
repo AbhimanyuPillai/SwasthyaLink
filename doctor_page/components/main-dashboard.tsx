@@ -8,7 +8,7 @@ import { QRScanner } from "@/components/qr-scanner"
 import { NewsReports } from "@/components/news-reports"
 import { PatientRecords } from "@/components/patient-records"
 import { PatientDashboard } from "@/components/patient-dashboard"
-import { usePatient } from "@/lib/patient-context"
+import { usePatient, Patient } from "@/lib/patient-context"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Keyboard, QrCode, Newspaper, Users, ArrowLeft, Building2, Activity } from "lucide-react"
@@ -18,21 +18,26 @@ type View = "dashboard" | "manual-entry" | "qr-scan" | "news" | "records" | "pat
 
 export function MainDashboard() {
   const { hospital } = useAuth()
-  const { currentPatient, setCurrentPatient } = usePatient()
+  const { setCurrentPatient } = usePatient()
   const [currentView, setCurrentView] = useState<View>("dashboard")
+  const [activePatient, setActivePatient] = useState<Patient | null>(null)
 
   const handleBack = () => {
     if (currentView === "patient-detail") {
+      setActivePatient(null)
       setCurrentPatient(null)
     }
     setCurrentView("dashboard")
   }
 
-  const handlePatientFound = () => {
+  const handlePatientFound = (patient: Patient) => {
+    setActivePatient(patient)
+    setCurrentPatient(patient)
     setCurrentView("patient-detail")
   }
 
-  const handleViewPatientFromRecords = () => {
+  const handleViewPatientFromRecords = (patient: Patient) => {
+    setActivePatient(patient)
     setCurrentView("patient-detail")
   }
 
@@ -47,7 +52,7 @@ export function MainDashboard() {
       case "records":
         return <PatientRecords onBack={handleBack} onViewPatient={handleViewPatientFromRecords} />
       case "patient-detail":
-        return currentPatient ? (
+        return activePatient ? (
           <PatientDashboard onBack={handleBack} />
         ) : (
           <MainGrid onNavigate={setCurrentView} />
@@ -124,8 +129,8 @@ export function MainDashboard() {
                   <Building2 className="w-5 h-5 text-primary-foreground/80" />
                 </div>
                 <div>
-                  <p className="text-primary-foreground font-semibold text-sm lg:text-base">{hospital?.name}</p>
-                  <p className="text-primary-foreground/70 text-xs lg:text-sm">{hospital?.doctorName}</p>
+                  <p className="text-primary-foreground font-semibold text-sm lg:text-base">{hospital?.hospital_name}</p>
+                  <p className="text-primary-foreground/70 text-xs lg:text-sm">{hospital?.full_name} • {hospital?.specialty}</p>
                 </div>
               </div>
               <div className="hidden sm:flex items-center gap-2 bg-secondary/20 rounded-full px-3 py-1.5">

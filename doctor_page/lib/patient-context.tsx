@@ -22,6 +22,7 @@ export interface Patient {
   gender: string
   bloodGroup: string
   address: string
+  photoUrl?: string
   medicalHistory: MedicalRecord[]
 }
 

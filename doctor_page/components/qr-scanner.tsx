@@ -1,19 +1,19 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { usePatient } from "@/lib/patient-context"
+import { Patient } from "@/lib/patient-context"
+import { handlePatientLookup } from "@/lib/firebase"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardTitle } from "@/components/ui/card"
 import { Spinner } from "@/components/ui/spinner"
 import { QrCode, Camera, CheckCircle2, AlertCircle, Scan } from "lucide-react"
 
 interface QRScannerProps {
-  onPatientFound: () => void
+  onPatientFound: (patient: Patient) => void
   onBack: () => void
 }
 
 export function QRScanner({ onPatientFound }: QRScannerProps) {
-  const { patients, setCurrentPatient } = usePatient()
   const [isScanning, setIsScanning] = useState(false)
   const [scanStatus, setScanStatus] = useState<"idle" | "scanning" | "found" | "error">("idle")
   const [scanProgress, setScanProgress] = useState(0)
@@ -38,16 +38,22 @@ export function QRScanner({ onPatientFound }: QRScannerProps) {
       })
     }, 100)
 
-    const scanTimer = setTimeout(() => {
-      // Simulate finding a patient (random from existing patients)
-      const randomPatient = patients[Math.floor(Math.random() * patients.length)]
-      if (randomPatient) {
-        setScanStatus("found")
-        setCurrentPatient(randomPatient)
-        setTimeout(() => {
-          onPatientFound()
-        }, 1000)
-      } else {
+    const scanTimer = setTimeout(async () => {
+      // Simulate reading a QR code string
+      const simulatedDecodedString = "SW-2024-001234" // In real life, camera outputs this
+
+      try {
+        const patient = await handlePatientLookup(simulatedDecodedString)
+        if (patient) {
+          setScanStatus("found")
+          setTimeout(() => {
+            onPatientFound(patient)
+          }, 1000)
+        } else {
+          setScanStatus("error")
+          setIsScanning(false)
+        }
+      } catch (err) {
         setScanStatus("error")
         setIsScanning(false)
       }
@@ -57,7 +63,7 @@ export function QRScanner({ onPatientFound }: QRScannerProps) {
       clearInterval(progressInterval)
       clearTimeout(scanTimer)
     }
-  }, [isScanning, patients, setCurrentPatient, onPatientFound])
+  }, [isScanning, onPatientFound])
 
   const resetScanner = () => {
     setIsScanning(false)

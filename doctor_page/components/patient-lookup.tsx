@@ -1,7 +1,8 @@
 "use client"
 
 import { useState } from "react"
-import { usePatient } from "@/lib/patient-context"
+import { Patient } from "@/lib/patient-context"
+import { handlePatientLookup } from "@/lib/firebase" // Now fetching from the subcollection!
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -10,12 +11,11 @@ import { Spinner } from "@/components/ui/spinner"
 import { Search, Phone, CreditCard, AlertCircle, Keyboard } from "lucide-react"
 
 interface PatientLookupProps {
-  onPatientFound: () => void
-  onBack: () => void
+  onPatientFound: (patient: Patient) => void
+  onBack?: () => void // Made optional just in case you don't need a back button on the root search
 }
 
 export function PatientLookup({ onPatientFound }: PatientLookupProps) {
-  const { findPatient, setCurrentPatient } = usePatient()
   const [query, setQuery] = useState("")
   const [error, setError] = useState("")
   const [isSearching, setIsSearching] = useState(false)
@@ -25,17 +25,20 @@ export function PatientLookup({ onPatientFound }: PatientLookupProps) {
     setError("")
     setIsSearching(true)
 
-    // Simulate network delay
-    await new Promise((resolve) => setTimeout(resolve, 800))
-
-    const patient = findPatient(query)
-    if (patient) {
-      setCurrentPatient(patient)
-      onPatientFound()
-    } else {
-      setError("No patient found with this mobile number or Swasthya ID")
+    try {
+      const patient = await handlePatientLookup(query)
+      if (patient) {
+        // Boom! This patient object now automatically has their full medicalHistory attached
+        onPatientFound(patient)
+      } else {
+        setError("Patient not found. Please check the ID or mobile number.")
+      }
+    } catch (err) {
+      setError("An error occurred while fetching the patient. Please try again.")
+      console.error(err)
+    } finally {
+      setIsSearching(false) // Cleaned up the duplicate state call here
     }
-    setIsSearching(false)
   }
 
   return (
