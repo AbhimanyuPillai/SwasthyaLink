@@ -5,7 +5,6 @@ import { auth, db, storage } from "@/lib/firebase"
 import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from "firebase/auth"
 import { doc, setDoc, serverTimestamp } from "firebase/firestore"
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage"
-import { resolveAssetUrl } from "@/lib/backend"
 import {
   IdCard,
   Smartphone,
@@ -19,7 +18,6 @@ import {
   Ruler,
   Scale,
   CheckCircle2,
-  Download,
   ArrowRight,
   Shield,
   Heart,
@@ -36,7 +34,7 @@ declare global {
 
 type AuthMode = "login" | "register"
 type LoginMethod = "swasthya-id" | "mobile" | "qr"
-type AuthState = "initial" | "otp" | "success"
+type AuthState = "initial" | "otp"
 
 interface FormData {
   fullName: string
@@ -70,6 +68,7 @@ export default function AuthPage() {
   
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [authError, setAuthError] = useState<string | null>(null)
 
   const [formData, setFormData] = useState<FormData>({
     fullName: "", dob: "", gender: "", bloodGroup: "", email: "",
@@ -86,6 +85,7 @@ export default function AuthPage() {
 
   const handleOtpChange = (index: number, value: string) => {
     if (value.length <= 1 && /^\d*$/.test(value)) {
+      setAuthError(null)
       const newOtp = [...otp]
       newOtp[index] = value
       setOtp(newOtp)
@@ -123,6 +123,7 @@ export default function AuthPage() {
     setLoginInput("")
     setConfirmationResult(null)
     window.confirmationResult = undefined
+    setAuthError(null)
   }
 
   const switchAuthMode = (mode: AuthMode) => {
@@ -138,8 +139,12 @@ export default function AuthPage() {
 
   // --- FIREBASE LOGIC ---
   const handleSendOtp = async (phoneNumber: string) => {
-    if (!phoneNumber || phoneNumber.length < 10) return alert("Please enter a valid mobile number")
-    
+    if (!phoneNumber || phoneNumber.length < 10) {
+      setAuthError("Please enter a valid mobile number.")
+      return
+    }
+
+    setAuthError(null)
     setIsLoading(true)
     try {
       if (window.recaptchaVerifier) {
@@ -160,7 +165,7 @@ export default function AuthPage() {
       
     } catch (error) {
       console.error("SMS Error:", error)
-      alert("Failed to send OTP. Check console.")
+      setAuthError("Failed to send OTP. Please try again.")
       if (window.recaptchaVerifier) {
         window.recaptchaVerifier.clear()
         window.recaptchaVerifier = undefined as any
@@ -174,7 +179,8 @@ export default function AuthPage() {
     const otpString = otp.join("")
     const confirmation = window.confirmationResult ?? confirmationResult
     if (otpString.length !== 6 || !confirmation) return
-    
+
+    setAuthError(null)
     setIsLoading(true)
     try {
       const credential = await confirmation.confirm(otpString)
@@ -229,13 +235,12 @@ export default function AuthPage() {
           age: calculatedAge ?? undefined,
         }
         sessionStorage.setItem("swasthya-user", JSON.stringify(sessionUser))
-        setAuthState("success")
+        router.replace("/dashboard")
       } else {
-        alert("Login successful! Redirecting to dashboard...")
-        router.push("/dashboard")
+        router.replace("/dashboard")
       }
     } catch (error) {
-      alert("Incorrect OTP. Please try again.")
+      setAuthError("Incorrect OTP. Please try again.")
     } finally {
       setIsLoading(false)
     }
@@ -297,11 +302,15 @@ export default function AuthPage() {
             {/* FIREBASE RECAPTCHA */}
             <div id="recaptcha-container"></div>
 
-            {authState === "success" ? (
-              <SuccessScreen formData={formData} onProceed={() => switchAuthMode("login")} />
-            ) : (
-              <>
-                <div className="flex border-b border-border">
+            {authState === "initial" && authError && (
+              <div className="px-4 pt-3">
+                <p className="text-xs text-destructive text-center rounded-md border border-destructive/25 bg-destructive/10 px-3 py-2">
+                  {authError}
+                </p>
+              </div>
+            )}
+
+            <div className="flex border-b border-border">
                   <button
                     type="button"
                     onClick={() => switchAuthMode("login")}
@@ -333,6 +342,7 @@ export default function AuthPage() {
                       onBack={resetToInitial}
                       isRegistration={authMode === "register"}
                       isLoading={isLoading}
+                      errorMessage={authState === "otp" ? authError : null}
                     />
                   ) : authMode === "login" ? (
                     <LoginForm
@@ -358,8 +368,6 @@ export default function AuthPage() {
                     />
                   )}
                 </div>
-              </>
-            )}
           </div>
 
           <div className="mt-6 text-center">
@@ -692,7 +700,17 @@ function RegisterForm({ formData, setFormData, healthConcernOptions, onHealthCon
   )
 }
 
-function OtpVerification({ otp, otpRefs, onOtpChange, onOtpKeyDown, onVerify, onBack, isRegistration, isLoading }: any) {
+function OtpVerification({
+  otp,
+  otpRefs,
+  onOtpChange,
+  onOtpKeyDown,
+  onVerify,
+  onBack,
+  isRegistration,
+  isLoading,
+  errorMessage,
+}: any) {
   return (
     <div className="space-y-6 text-center">
       <div>
@@ -702,6 +720,12 @@ function OtpVerification({ otp, otpRefs, onOtpChange, onOtpKeyDown, onVerify, on
         <h3 className="text-lg font-semibold text-foreground mb-1">OTP Verification</h3>
         <p className="text-sm text-muted-foreground">Enter the 6-digit code sent to your mobile</p>
       </div>
+
+      {errorMessage && (
+        <p className="text-xs text-destructive rounded-md border border-destructive/25 bg-destructive/10 px-3 py-2 mx-auto max-w-sm">
+          {errorMessage}
+        </p>
+      )}
 
       <div className="flex justify-center gap-2">
         {otp.map((digit: string, index: number) => (
@@ -737,92 +761,3 @@ function OtpVerification({ otp, otpRefs, onOtpChange, onOtpKeyDown, onVerify, on
   )
 }
 
-function SuccessScreen({ formData, onProceed }: any) {
-  const swasthyaId = "SL-" + Math.random().toString(36).substring(2, 6).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase()
-  const calculatedAge = calculateAge(formData.dob)
-  const storedUser = typeof window !== "undefined" ? sessionStorage.getItem("swasthya-user") : null
-  const user = storedUser ? JSON.parse(storedUser) : null
-  const photoUrl = resolveAssetUrl(user?.photo_url)
-
-  return (
-    <div className="p-6 space-y-6">
-      <div className="text-center">
-        <div className="w-20 h-20 bg-success/10 rounded-full flex items-center justify-center mx-auto mb-4">
-          <CheckCircle2 className="w-10 h-10 text-success" />
-        </div>
-        <h3 className="text-xl font-bold text-foreground mb-1">Account Created Successfully</h3>
-        <p className="text-sm text-muted-foreground">Your Swasthya ID has been generated</p>
-      </div>
-
-      <div className="bg-gradient-to-br from-primary via-primary to-primary/90 rounded-xl p-4 text-primary-foreground shadow-lg">
-        <div className="flex justify-between items-start mb-4">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-primary-foreground/20 rounded-lg flex items-center justify-center">
-              <Heart className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-xs opacity-80">Government of India</p>
-              <p className="text-sm font-bold">Swasthya Card</p>
-            </div>
-          </div>
-          <div className="text-right">
-            <p className="text-[10px] opacity-70">Swasthya ID</p>
-            <p className="text-xs font-mono font-semibold">{swasthyaId}</p>
-          </div>
-        </div>
-
-        <div className="flex gap-4">
-          <div className="w-20 h-24 bg-primary-foreground/20 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden">
-            {photoUrl ? (
-              <img src={photoUrl} alt={formData.fullName || "Profile"} className="w-full h-full object-cover" />
-            ) : (
-              <User className="w-10 h-10 opacity-50" />
-            )}
-          </div>
-          <div className="flex-1 space-y-1.5 text-xs">
-            <div>
-              <p className="opacity-70 text-[10px]">Name</p>
-              <p className="font-semibold truncate">{formData.fullName || "John Doe"}</p>
-            </div>
-            <div className="flex gap-4">
-              <div>
-                <p className="opacity-70 text-[10px]">DOB</p>
-                <p className="font-medium">{formData.dob || "01/01/1990"}</p>
-              </div>
-              <div>
-                <p className="opacity-70 text-[10px]">Age</p>
-                <p className="font-medium">{calculatedAge !== null ? `${calculatedAge}y` : "-"}</p>
-              </div>
-              <div>
-                <p className="opacity-70 text-[10px]">Gender</p>
-                <p className="font-medium capitalize">{formData.gender || "Male"}</p>
-              </div>
-              <div>
-                <p className="opacity-70 text-[10px]">Blood</p>
-                <p className="font-medium">{formData.bloodGroup || "O+"}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-4 flex justify-between items-end">
-          <div className="text-[10px] opacity-70">
-            <p>Emergency: {formData.emergencyContact || "+91 XXXXX XXXXX"}</p>
-          </div>
-          <div className="w-14 h-14 bg-primary-foreground rounded-md flex items-center justify-center">
-            <QrCode className="w-10 h-10 text-primary" />
-          </div>
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        <button type="button" className="w-full py-3 bg-saffron text-saffron-foreground font-semibold rounded-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-2">
-          <Download className="w-4 h-4" /> Download Official Card
-        </button>
-        <button type="button" onClick={onProceed} className="w-full py-3 bg-primary text-primary-foreground font-semibold rounded-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-2">
-          Proceed to Dashboard <ArrowRight className="w-4 h-4" />
-        </button>
-      </div>
-    </div>
-  )
-}
