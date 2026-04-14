@@ -1,15 +1,21 @@
 "use client"
 
-import { useState } from "react"
-import { Calendar, Building2, Stethoscope, X, FileText, Pill, ClipboardList } from "lucide-react"
+import { useState, useEffect } from "react"
+import { Calendar, Building2, Stethoscope, X, FileText, Pill, ClipboardList, AlertCircle } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { db, auth } from "@/lib/firebase"
+import { collection, query, orderBy, onSnapshot } from "firebase/firestore"
+import { onAuthStateChanged } from "firebase/auth"
+import { Skeleton } from "@/components/ui/skeleton"
+import { format } from "date-fns"
 
+// Removed hardcoded history
 interface Consultation {
-  id: number
-  specialty: string
+  id: string
+  specialization: string
   date: string
-  hospital: string
+  hospitalName: string
   diagnosis: string
   symptoms: string[]
   prescriptions: string[]
@@ -17,74 +23,62 @@ interface Consultation {
   followUp?: string
 }
 
-const consultationHistory: Consultation[] = [
-  {
-    id: 1,
-    specialty: "General Physician",
-    date: "28 Mar 2026",
-    hospital: "Sassoon General Hospital, Pune",
-    diagnosis: "Viral Fever with Upper Respiratory Tract Infection",
-    symptoms: ["Fever (101°F)", "Sore throat", "Body ache", "Mild cough"],
-    prescriptions: ["Paracetamol 500mg - 3 times daily", "Cetirizine 10mg - Once at night", "Vitamin C supplements"],
-    notes: "Patient advised rest for 3 days. Increase fluid intake. Return if fever persists beyond 5 days.",
-    followUp: "02 Apr 2026"
-  },
-  {
-    id: 2,
-    specialty: "Cardiologist",
-    date: "15 Mar 2026",
-    hospital: "Ruby Hall Clinic, Pune",
-    diagnosis: "Routine Cardiac Check-up - Normal",
-    symptoms: ["Routine check-up", "No complaints"],
-    prescriptions: ["Continue existing medication", "Ecosprin 75mg - Once daily"],
-    notes: "ECG normal. Blood pressure well controlled at 120/80. Continue healthy lifestyle.",
-    followUp: "15 Sep 2026"
-  },
-  {
-    id: 3,
-    specialty: "Dermatologist",
-    date: "02 Mar 2026",
-    hospital: "Jehangir Hospital, Pune",
-    diagnosis: "Allergic Contact Dermatitis",
-    symptoms: ["Skin rash on forearms", "Itching", "Redness"],
-    prescriptions: ["Hydrocortisone cream 1% - Apply twice daily", "Loratadine 10mg - Once daily"],
-    notes: "Avoid contact with suspected allergen (new detergent). Use cotton clothing.",
-  },
-  {
-    id: 4,
-    specialty: "ENT Specialist",
-    date: "18 Feb 2026",
-    hospital: "Deenanath Mangeshkar Hospital",
-    diagnosis: "Chronic Sinusitis",
-    symptoms: ["Nasal congestion", "Facial pressure", "Post-nasal drip"],
-    prescriptions: ["Nasivion nasal drops", "Steam inhalation twice daily", "Montelukast 10mg"],
-    notes: "CT scan recommended if symptoms persist. Avoid cold beverages.",
-    followUp: "18 Mar 2026"
-  },
-  {
-    id: 5,
-    specialty: "Orthopedic Surgeon",
-    date: "05 Feb 2026",
-    hospital: "Aditya Birla Memorial Hospital",
-    diagnosis: "Mild Lumbar Strain",
-    symptoms: ["Lower back pain", "Stiffness in morning"],
-    prescriptions: ["Diclofenac gel - Apply locally", "Thiocolchicoside 4mg - Twice daily for 5 days"],
-    notes: "Physiotherapy recommended. Avoid heavy lifting. Maintain proper posture.",
-  },
-  {
-    id: 6,
-    specialty: "General Physician",
-    date: "22 Jan 2026",
-    hospital: "KEM Hospital, Pune",
-    diagnosis: "Annual Health Check-up",
-    symptoms: ["Routine check-up"],
-    prescriptions: ["Vitamin D3 60000 IU - Once weekly for 8 weeks", "Continue multivitamins"],
-    notes: "All reports normal. Vitamin D slightly low. Increase sun exposure and dietary calcium.",
-  },
-]
-
 export function MedicalRecord() {
   const [selectedConsultation, setSelectedConsultation] = useState<Consultation | null>(null)
+  const [records, setRecords] = useState<Consultation[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    let unsubSnapshot: (() => void) | null = null
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        const recordsRef = collection(db, "users", user.uid, "records")
+        const q = query(recordsRef, orderBy("date", "desc"))
+
+        unsubSnapshot = onSnapshot(q, (snapshot) => {
+          const fetchedRecords = snapshot.docs.map(doc => {
+            const data = doc.data()
+            // Format date correctly
+            let dateDisplay = "N/A"
+            if (data.date) {
+              try {
+                const dateObj = data.date.toDate ? data.date.toDate() : new Date(data.date)
+                dateDisplay = format(dateObj, "dd MMM yyyy")
+              } catch (e) {
+                dateDisplay = data.date
+              }
+            }
+
+            return {
+              id: doc.id,
+              specialization: data.specialization || data.doctorType || "General Consultation",
+              date: dateDisplay,
+              hospitalName: data.hospitalName || data.location || "Private Clinic",
+              diagnosis: data.diagnosis || "No specific diagnosis recorded",
+              symptoms: Array.isArray(data.symptoms) ? data.symptoms : (data.symptoms ? [data.symptoms] : []),
+              prescriptions: Array.isArray(data.prescriptions) ? data.prescriptions : (data.prescriptions ? [data.prescriptions] : []),
+              notes: data.doctorNotes || data.notes || "No additional notes provided.",
+              followUp: data.followUpDate ? (data.followUpDate.toDate ? format(data.followUpDate.toDate(), "dd MMM yyyy") : data.followUpDate) : undefined
+            }
+          })
+          setRecords(fetchedRecords)
+          setIsLoading(false)
+        }, (err) => {
+          console.error("Records fetch error:", err)
+          setIsLoading(false)
+        })
+      } else {
+        setRecords([])
+        setIsLoading(false)
+      }
+    })
+
+    return () => {
+      unsubscribeAuth()
+      if (unsubSnapshot) unsubSnapshot()
+    }
+  }, [])
 
   return (
     <div className="space-y-4">
@@ -97,59 +91,84 @@ export function MedicalRecord() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="relative">
-            <div className="absolute left-[7px] top-2 bottom-2 w-px bg-border" />
+            {records.length > 0 && (
+              <div className="absolute left-[7px] top-2 bottom-2 w-px bg-border" />
+            )}
 
             <div className="space-y-0">
-              {consultationHistory.map((consultation, index) => (
-                <button
-                  key={consultation.id}
-                  onClick={() => setSelectedConsultation(consultation)}
-                  className="relative flex gap-3 pb-4 last:pb-0 w-full text-left group"
-                >
-                  <div className="relative z-10 flex-shrink-0">
-                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors ${
+              {isLoading ? (
+                <div className="space-y-4">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="flex gap-3">
+                      <Skeleton className="w-4 h-4 rounded-full flex-shrink-0" />
+                      <Skeleton className="h-20 w-full rounded-md" />
+                    </div>
+                  ))}
+                </div>
+              ) : records.length > 0 ? (
+                records.map((consultation, index) => (
+                  <button
+                    key={consultation.id}
+                    onClick={() => setSelectedConsultation(consultation)}
+                    className="relative flex gap-3 pb-4 last:pb-0 w-full text-left group"
+                  >
+                    <div className="relative z-10 flex-shrink-0">
+                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors ${
+                        index === 0 
+                          ? "bg-primary border-primary" 
+                          : "bg-card border-border group-hover:border-primary/50"
+                      }`}>
+                        <div className={`w-1.5 h-1.5 rounded-full ${
+                          index === 0 ? "bg-primary-foreground" : "bg-muted-foreground"
+                        }`} />
+                      </div>
+                    </div>
+
+                    <div className={`flex-1 rounded-md border p-2.5 transition-all ${
                       index === 0 
-                        ? "bg-primary border-primary" 
-                        : "bg-card border-border group-hover:border-primary/50"
+                        ? "border-primary/30 bg-primary/5 shadow-sm" 
+                        : "border-border bg-card group-hover:border-primary/30 group-hover:bg-primary/5"
                     }`}>
-                      <div className={`w-1.5 h-1.5 rounded-full ${
-                        index === 0 ? "bg-primary-foreground" : "bg-muted-foreground"
-                      }`} />
-                    </div>
-                  </div>
+                      <div className="flex items-start justify-between mb-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <Stethoscope className="h-3 w-3 text-primary" />
+                          <span className="font-semibold text-foreground text-xs">
+                            {consultation.specialization}
+                          </span>
+                        </div>
+                        {index === 0 && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-saffron text-saffron-foreground">
+                            Latest
+                          </span>
+                        )}
+                      </div>
 
-                  <div className={`flex-1 rounded-md border p-2.5 transition-all ${
-                    index === 0 
-                      ? "border-primary/30 bg-primary/5" 
-                      : "border-border bg-card group-hover:border-primary/30 group-hover:bg-primary/5"
-                  }`}>
-                    <div className="flex items-start justify-between mb-1.5">
-                      <div className="flex items-center gap-1.5">
-                        <Stethoscope className="h-3 w-3 text-primary" />
-                        <span className="font-semibold text-foreground text-xs">
-                          {consultation.specialty}
-                        </span>
-                      </div>
-                      {index === 0 && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-secondary text-secondary-foreground">
-                          Latest
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="space-y-1 text-[11px]">
-                      <div className="flex items-center gap-1.5 text-muted-foreground">
-                        <Calendar className="h-3 w-3" />
-                        <span>{consultation.date}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-muted-foreground">
-                        <Building2 className="h-3 w-3" />
-                        <span className="truncate">{consultation.hospital}</span>
+                      <div className="space-y-1 text-[11px]">
+                        <div className="flex items-center gap-1.5 text-muted-foreground">
+                          <Calendar className="h-3 w-3" />
+                          <span>{consultation.date}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-muted-foreground">
+                          <Building2 className="h-3 w-3" />
+                          <span className="truncate">{consultation.hospitalName}</span>
+                        </div>
                       </div>
                     </div>
+                  </button>
+                ))
+              ) : (
+                <div className="py-10 text-center space-y-3">
+                  <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto">
+                    <AlertCircle className="h-6 w-6 text-muted-foreground" />
                   </div>
-                </button>
-              ))}
+                  <div className="max-w-[200px] mx-auto">
+                    <p className="text-xs font-medium text-foreground">No medical records found.</p>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      Consult a SwasthyaLink verified doctor to begin your digital ledger.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </CardContent>
@@ -168,7 +187,7 @@ export function MedicalRecord() {
             {/* Modal Header */}
             <div className="flex items-center justify-between p-3 border-b border-border bg-primary text-primary-foreground">
               <div>
-                <h3 className="font-semibold text-sm">{selectedConsultation.specialty}</h3>
+                <h3 className="font-semibold text-sm">{selectedConsultation.specialization}</h3>
                 <p className="text-[11px] text-primary-foreground/80">{selectedConsultation.date}</p>
               </div>
               <button
@@ -186,7 +205,7 @@ export function MedicalRecord() {
                 <Building2 className="h-4 w-4 text-primary mt-0.5 flex-shrink-0" />
                 <div>
                   <p className="text-[10px] text-muted-foreground uppercase font-medium">Hospital</p>
-                  <p className="text-xs text-foreground">{selectedConsultation.hospital}</p>
+                  <p className="text-xs text-foreground">{selectedConsultation.hospitalName}</p>
                 </div>
               </div>
 

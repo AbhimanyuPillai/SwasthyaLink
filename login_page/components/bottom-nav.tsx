@@ -29,11 +29,11 @@ export function BottomNav({ activeTab, onTabChange }: BottomNavProps) {
               onClick={() => onTabChange(item.id)}
               className={cn(
                 "flex flex-col items-center justify-center flex-1 h-full py-1.5 transition-colors",
-                isActive ? "text-primary" : "text-muted-foreground active:text-foreground"
+                isActive ? "text-accent" : "text-muted-foreground active:text-foreground"
               )}
             >
-              <item.icon className={cn("h-[18px] w-[18px]", isActive && "text-primary")} />
-              <span className={cn("text-[10px] font-medium mt-0.5", isActive && "text-primary")}>
+              <item.icon className={cn("h-[18px] w-[18px]", isActive && "text-accent")} />
+              <span className={cn("text-[10px] font-medium mt-0.5", isActive && "text-accent")}>
                 {item.label}
               </span>
             </button>

@@ -11,8 +11,10 @@ import { Profile } from "@/components/profile"
 import { LocationModal } from "@/components/location-modal"
 import { cn } from "@/lib/utils"
 import { resolveAssetUrl } from "@/lib/backend"
-import { db } from "@/lib/firebase"
-import { doc, updateDoc, getDoc } from "firebase/firestore"
+import { db, auth } from "@/lib/firebase"
+import { signOut, onAuthStateChanged } from "firebase/auth"
+import { doc, updateDoc, getDoc, onSnapshot } from "firebase/firestore"
+import { toast } from "sonner"
 
 type Tab = "agent" | "news" | "records" | "profile"
 
@@ -34,9 +36,11 @@ export default function SwasthyaLinkDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>("agent")
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [locationModalOpen, setLocationModalOpen] = useState(false)
-  const [userAvatar, setUserAvatar] = useState<string>("https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=40&h=40&fit=crop&crop=face")
-  const [userName, setUserName] = useState<string>("Priya Sharma")
-  const [userIdDisplay, setUserIdDisplay] = useState<string>("SWID-MH-2024-08521")
+  const [userAvatar, setUserAvatar] = useState<string>("")
+  const [userName, setUserName] = useState<string>("Loading...")
+  const [userIdDisplay, setUserIdDisplay] = useState<string>("")
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
+  const router = useRouter()
 
   // Open location modal on first mount (simulating new session)
   useEffect(() => {
@@ -47,37 +51,39 @@ export default function SwasthyaLinkDashboard() {
   }, [])
 
   useEffect(() => {
-    const fetchUserData = async () => {
-      try {
-        const raw = sessionStorage.getItem("swasthya-user")
-        let storedUser = raw ? JSON.parse(raw) : null
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        // Setup listener for real-time dashboard updates
+        const docRef = doc(db, "users", user.uid)
+        const unsubSnapshot = onSnapshot(docRef, (docSnap) => {
+          if (docSnap.exists()) {
+            const freshData = docSnap.data()
+            setUserName(freshData.full_name ?? freshData.name ?? "User")
+            
+            const avatarUrl = resolveAssetUrl(freshData.photo_url)
+            if (avatarUrl) {
+              setUserAvatar(avatarUrl)
+            } else {
+              setUserAvatar("") // Reset to use fallback in UI
+            }
 
-        if (storedUser?.uid) {
-          // Fetch fresh data from Firestore
-          const userDoc = await getDoc(doc(db, "users", storedUser.uid))
-          if (userDoc.exists()) {
-            const freshData = userDoc.data()
-            storedUser = { ...storedUser, ...freshData }
-            sessionStorage.setItem("swasthya-user", JSON.stringify(storedUser))
+            if (freshData.swasthya_id) {
+              setUserIdDisplay(freshData.swasthya_id)
+            } else {
+              setUserIdDisplay(`SL-${user.uid.slice(0, 8).toUpperCase()}`)
+            }
           }
-        }
-
-        const avatarUrl = resolveAssetUrl(storedUser?.photo_url)
-        if (avatarUrl) setUserAvatar(avatarUrl)
-        if (storedUser?.full_name || storedUser?.name) {
-          setUserName(storedUser.full_name ?? storedUser.name)
-        }
-        if (storedUser?.uid) {
-          setUserIdDisplay(`SL-${String(storedUser.uid).slice(0, 8).toUpperCase()}`)
-        } else if (storedUser?.id) {
-          setUserIdDisplay(`SL-${storedUser.id}`)
-        }
-      } catch (err) {
-        console.error("Error fetching user data:", err)
+        })
+        return () => unsubSnapshot()
+      } else {
+        // Not logged in, redirect handled by auth guards if any, but clear state
+        setUserName("")
+        setUserAvatar("")
+        setUserIdDisplay("")
       }
-    }
+    })
 
-    fetchUserData()
+    return () => unsubscribe()
   }, [])
 
   const handleLocationSave = async (position: [number, number], address: string) => {
@@ -107,6 +113,29 @@ export default function SwasthyaLinkDashboard() {
 
   const openLocationModal = () => {
     setLocationModalOpen(true)
+  }
+
+  const handleLogout = async () => {
+    try {
+      setIsLoggingOut(true)
+      
+      // 1. Firebase Sign Out
+      await signOut(auth)
+      
+      // 2. Session/Local Storage Cleanup
+      sessionStorage.clear()
+      localStorage.removeItem("swasthya-user")
+      localStorage.removeItem("swasthya-location-set")
+      
+      toast.success("Logged out successfully")
+      
+      // 3. Programmatic Redirect
+      router.push("/")
+    } catch (error) {
+      console.error("Logout error:", error)
+      toast.error("Failed to logout. Please try again.")
+      setIsLoggingOut(false)
+    }
   }
 
   const renderContent = () => {
@@ -147,14 +176,14 @@ export default function SwasthyaLinkDashboard() {
         {/* Clickable Logo - navigates to Swasthya Mitra */}
         <button
           onClick={() => setActiveTab("agent")}
-          className="p-3 border-b border-sidebar-border hover:bg-sidebar-accent/50 transition-colors text-left"
+          className="p-3 border-b border-sidebar-border hover:bg-sidebar-accent transition-colors text-left"
         >
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-md bg-sidebar-accent flex items-center justify-center">
-              <Activity className="h-4 w-4 text-sidebar-accent-foreground" />
+            <div className="w-8 h-8 rounded-md bg-sidebar-primary flex items-center justify-center">
+              <Activity className="h-4 w-4 text-sidebar-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-sm font-bold tracking-tight">Swasthya Link</h1>
+              <h1 className="text-sm font-bold tracking-tight text-sidebar-foreground">Swasthya Link</h1>
               <p className="text-[10px] text-sidebar-foreground/70">Health Portal</p>
             </div>
           </div>
@@ -169,13 +198,13 @@ export default function SwasthyaLinkDashboard() {
                   <button
                     onClick={() => setActiveTab(item.id)}
                     className={cn(
-                      "w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-xs font-medium transition-all",
+                      "w-full flex items-center gap-2 px-3 py-2.5 rounded-md text-sm font-medium transition-all duration-200",
                       isActive
-                        ? "bg-sidebar-primary text-sidebar-primary-foreground"
-                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                        ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-lg shadow-sidebar-primary/20"
+                        : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
                     )}
                   >
-                    <item.icon className="h-4 w-4" />
+                    <item.icon className={cn("h-4 w-4", isActive ? "text-sidebar-primary-foreground" : "text-sidebar-foreground/70")} />
                     {item.label}
                   </button>
                 </li>
@@ -187,14 +216,20 @@ export default function SwasthyaLinkDashboard() {
         {/* Clickable Profile Card - navigates to Profile tab */}
         <button
           onClick={() => setActiveTab("profile")}
-          className="p-3 border-t border-sidebar-border hover:bg-sidebar-accent/50 transition-colors text-left"
+          className="p-3 border-t border-sidebar-border hover:bg-sidebar-accent transition-colors text-left"
         >
           <div className="flex items-center gap-2">
-            <img
-              src={userAvatar}
-              alt="User avatar"
-              className="w-7 h-7 rounded-full object-cover"
-            />
+            {userAvatar ? (
+              <img
+                src={userAvatar}
+                alt="User avatar"
+                className="w-7 h-7 rounded-full object-cover"
+              />
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-sidebar-accent flex items-center justify-center">
+                <User className="h-4 w-4 text-sidebar-accent-foreground" />
+              </div>
+            )}
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium truncate">{userName}</p>
               <p className="text-[10px] text-sidebar-foreground/60 truncate">{userIdDisplay}</p>
@@ -254,13 +289,13 @@ export default function SwasthyaLinkDashboard() {
                       setSidebarOpen(false)
                     }}
                     className={cn(
-                      "w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-xs font-medium transition-all",
+                      "w-full flex items-center gap-2 px-3 py-2.5 rounded-md text-sm font-medium transition-all duration-200",
                       isActive
-                        ? "bg-sidebar-primary text-sidebar-primary-foreground"
-                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                        ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-lg shadow-sidebar-primary/20"
+                        : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
                     )}
                   >
-                    <item.icon className="h-4 w-4" />
+                    <item.icon className={cn("h-4 w-4", isActive ? "text-sidebar-primary-foreground" : "text-sidebar-foreground/70")} />
                     {item.label}
                   </button>
                 </li>
@@ -275,14 +310,20 @@ export default function SwasthyaLinkDashboard() {
             setActiveTab("profile")
             setSidebarOpen(false)
           }}
-          className="p-3 border-t border-sidebar-border hover:bg-sidebar-accent/50 transition-colors text-left w-full"
+          className="p-3 border-t border-sidebar-border hover:bg-sidebar-accent transition-colors text-left w-full"
         >
           <div className="flex items-center gap-2">
-            <img
-              src={userAvatar}
-              alt="User avatar"
-              className="w-7 h-7 rounded-full object-cover"
-            />
+            {userAvatar ? (
+              <img
+                src={userAvatar}
+                alt="User avatar"
+                className="w-7 h-7 rounded-full object-cover"
+              />
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-sidebar-accent flex items-center justify-center">
+                <User className="h-4 w-4 text-sidebar-accent-foreground" />
+              </div>
+            )}
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium truncate">{userName}</p>
               <p className="text-[10px] text-sidebar-foreground/60 truncate">{userIdDisplay}</p>
@@ -320,17 +361,31 @@ export default function SwasthyaLinkDashboard() {
                 <h1 className="text-base font-semibold">{tabTitles[activeTab]}</h1>
               </div>
             </div>
-            <button
-              className="p-1.5 rounded-md bg-primary-foreground/10 hover:bg-primary-foreground/20 transition-colors flex items-center gap-1.5 text-xs"
-              onClick={() => {
-                // Clear session and reload
-                sessionStorage.clear()
-                window.location.reload()
-              }}
-            >
-              <LogOut className="h-4 w-4" />
-              <span className="hidden sm:inline">Logout</span>
-            </button>
+            
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 pr-2 border-r border-primary-foreground/20">
+                <img 
+                  src="/swasthyalink-logo.png" 
+                  alt="Swasthya Link Logo" 
+                  className="h-6 w-auto brightness-0 invert"
+                />
+                <span className="hidden sm:inline font-bold text-xs tracking-tight uppercase">Swasthya Link</span>
+              </div>
+              
+              <button
+                className={cn(
+                  "p-1.5 rounded-md bg-primary-foreground/10 hover:bg-primary-foreground/20 transition-colors flex items-center gap-1.5 text-xs text-white",
+                  isLoggingOut && "opacity-50 cursor-not-allowed"
+                )}
+                onClick={handleLogout}
+                disabled={isLoggingOut}
+              >
+                <LogOut className="h-4 w-4" />
+                <span className="hidden sm:inline font-medium">
+                  {isLoggingOut ? "Logging out..." : "Logout"}
+                </span>
+              </button>
+            </div>
           </div>
 
           {activeTab !== "agent" && (

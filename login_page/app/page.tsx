@@ -3,8 +3,9 @@
 import { useState, useRef, useEffect, useMemo } from "react"
 import { auth, db, storage } from "@/lib/firebase"
 import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from "firebase/auth"
-import { doc, setDoc, serverTimestamp, query, where, getDocs, collection } from "firebase/firestore"
+import { doc, setDoc, serverTimestamp, query, where, getDocs, collection, limit } from "firebase/firestore"
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage"
+import { Html5Qrcode } from "html5-qrcode"
 import {
   IdCard,
   Smartphone,
@@ -21,6 +22,7 @@ import {
   ArrowRight,
   Shield,
   Heart,
+  FileText,
 } from "lucide-react"
 import { useRouter } from "next/navigation" 
 // (Make sure it's next/navigation, NOT next/router!)
@@ -149,26 +151,36 @@ export default function AuthPage() {
     setIsLoading(true)
 
     try {
-      // Logic for Dual Login: Handle Swasthya ID
-      if (authMode === "login" && loginMethod === "swasthya-id") {
-        const q = query(collection(db, "users"), where("swasthya_id", "==", input));
+      // 1. Check registration based on method
+      let userDocToUse = null;
+
+      if (authMode === "login") {
+        let q;
+        if (loginMethod === "swasthya-id" || loginMethod === "qr") {
+          q = query(collection(db, "users"), where("swasthya_id", "==", input.trim()));
+        } else {
+          // Normalize phone for query
+          const rawDigit = input.replace(/\D/g, '').slice(-10);
+          const formats = [rawDigit, `+91${rawDigit}`, `0${rawDigit}`];
+          q = query(collection(db, "users"), where("phone", "in", formats));
+        }
+
         const querySnapshot = await getDocs(q);
-        
         if (querySnapshot.empty) {
-          throw new Error("Swasthya ID not found. Please register or check your ID.");
+          throw new Error(loginMethod === "swasthya-id" 
+            ? "Swasthya ID not found. Please register first." 
+            : "Mobile number is not registered. Please create an account.");
         }
         
-        const userData = querySnapshot.docs[0].data();
-        phoneToUse = userData.phone || userData.mobile_number;
-        
-        if (!phoneToUse) {
-          throw new Error("No phone number associated with this Swasthya ID.");
-        }
+        userDocToUse = querySnapshot.docs[0].data();
+        phoneToUse = userDocToUse.phone || userDocToUse.mobile_number;
       }
 
       if (!phoneToUse || phoneToUse.length < 10) {
-        throw new Error("Invalid mobile number detected.");
+        throw new Error("Please provide a valid 10-digit mobile number.");
       }
+
+      // 2. Setup Recaptcha
       if (window.recaptchaVerifier) {
         window.recaptchaVerifier.clear()
         window.recaptchaVerifier = undefined as any
@@ -178,16 +190,26 @@ export default function AuthPage() {
       if (container) container.innerHTML = ""
 
       window.recaptchaVerifier = new RecaptchaVerifier(auth, "recaptcha-container", { size: "invisible" })
-      const formattedPhone = phoneToUse.startsWith("+91") ? phoneToUse : `+91${phoneToUse.replace(/\D/g, '').slice(-10)}`
       
+      // Standardize to +91 for Firebase
+      const formattedPhone = phoneToUse.startsWith("+") ? phoneToUse : `+91${phoneToUse.replace(/\D/g, '').slice(-10)}`
+      
+      // 3. Send OTP
       const confirmation = await signInWithPhoneNumber(auth, formattedPhone, window.recaptchaVerifier)
       setConfirmationResult(confirmation)
       window.confirmationResult = confirmation
       setAuthState("otp")
       
     } catch (error: any) {
-      console.error("SMS Error:", error)
-      setAuthError(error.message || "Failed to send OTP. Please try again.")
+      console.error("Auth Logic Error:", error)
+      let displayMessage = error.message || "Failed to process request.";
+      
+      // Translate common Firebase errors
+      if (error.code === 'auth/invalid-phone-number') displayMessage = "The phone number format is invalid.";
+      if (error.code === 'auth/quota-exceeded') displayMessage = "Too many requests. Please try again later.";
+      if (error.code === 'auth/user-disabled') displayMessage = "This account has been disabled.";
+
+      setAuthError(displayMessage)
       if (window.recaptchaVerifier) {
         window.recaptchaVerifier.clear()
         window.recaptchaVerifier = undefined as any
@@ -228,7 +250,7 @@ export default function AuthPage() {
         const randomDigits = Math.floor(1000 + Math.random() * 9000);
         const generatedSwasthyaId = `SW-${currentYear}-${randomDigits}`;
 
-        await setDoc(doc(db, "users", firebaseUser.uid), {
+        const userData = {
           full_name: formData.fullName,
           email: formData.email,
           phone: firebaseUser.phoneNumber ?? formData.mobile,
@@ -243,33 +265,42 @@ export default function AuthPage() {
           photo_url: photoUrl,
           swasthya_id: generatedSwasthyaId,
           created_at: serverTimestamp(),
-        })
+        }
+
+        await setDoc(doc(db, "users", firebaseUser.uid), userData)
 
         const sessionUser = {
           uid: firebaseUser.uid,
-          name: formData.fullName,
-          full_name: formData.fullName,
-          email: formData.email,
-          mobile_number: formData.mobile.replace(/\D/g, "").slice(-10),
-          gender: formData.gender,
-          blood_group: formData.bloodGroup,
-          dob: formData.dob,
-          emergency_contact: formData.emergencyContact,
-          height_cm: Number(formData.height) || 0,
-          weight_kg: Number(formData.weight) || 0,
-          conditions,
-          location: "Pune, Maharashtra",
-          photo_url: photoUrl,
-          swasthya_id: generatedSwasthyaId,
+          ...userData,
           age: calculatedAge ?? undefined,
         }
         sessionStorage.setItem("swasthya-user", JSON.stringify(sessionUser))
         router.replace("/dashboard")
       } else {
+        // Fetch existing user data on login
+        const q = query(collection(db, "users"), where("phone", "==", firebaseUser.phoneNumber), limit(1));
+        const userDoc = await getDocs(q);
+        
+        if (!userDoc.empty) {
+          const data = userDoc.docs[0].data();
+          const sessionUser = {
+            uid: firebaseUser.uid,
+            full_name: data.full_name ?? data.name,
+            ...data,
+          }
+          sessionStorage.setItem("swasthya-user", JSON.stringify(sessionUser))
+        } else {
+          // If for some reason Firestore doc is missing but auth succeeded
+          sessionStorage.setItem("swasthya-user", JSON.stringify({ 
+            uid: firebaseUser.uid, 
+            phone: firebaseUser.phoneNumber 
+          }))
+        }
         router.replace("/dashboard")
       }
-    } catch (error) {
-      setAuthError("Incorrect OTP. Please try again.")
+    } catch (error: any) {
+      console.error("Verification Error:", error)
+      setAuthError(error.code === 'auth/invalid-verification-code' ? "Incorrect OTP. Please try again." : "Verification failed.")
     } finally {
       setIsLoading(false)
     }
@@ -379,7 +410,7 @@ export default function AuthPage() {
                       setLoginMethod={setLoginMethod}
                       loginInput={loginInput}
                       setLoginInput={setLoginInput}
-                      onGetOtp={() => handleSendOtp(loginInput)}
+                      onGetOtp={(input?: string) => handleSendOtp(input || loginInput)}
                       isLoading={isLoading}
                     />
                   ) : (
@@ -414,61 +445,76 @@ export default function AuthPage() {
 function LoginForm({ loginMethod, setLoginMethod, loginInput, setLoginInput, onGetOtp, isLoading }: any) {
   const [isCameraOpen, setIsCameraOpen] = useState(false)
   const [cameraError, setCameraError] = useState("")
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const streamRef = useRef<MediaStream | null>(null)
+  const qrReaderRef = useRef<Html5Qrcode | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop())
-      streamRef.current = null
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null
+  const stopScanner = async () => {
+    if (qrReaderRef.current && qrReaderRef.current.isScanning) {
+      try {
+        await qrReaderRef.current.stop()
+      } catch (e) {
+        console.error("Stop error:", e)
+      }
     }
     setIsCameraOpen(false)
   }
 
   const handleScanQrClick = async () => {
     if (isCameraOpen) {
-      stopCamera()
+      await stopScanner()
       return
     }
 
     setCameraError("")
     try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error("Camera is not supported on this browser.")
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
-        audio: false,
-      })
-
-      streamRef.current = stream
+      const qrReader = new Html5Qrcode("qr-reader")
+      qrReaderRef.current = qrReader
       setIsCameraOpen(true)
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        await videoRef.current.play()
-      }
+      await qrReader.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        (decodedText) => {
+          setLoginInput(decodedText)
+          stopScanner()
+          onGetOtp(decodedText)
+        },
+        (errorMessage) => {}
+      )
     } catch (error) {
-      setCameraError("Unable to access camera. Please allow camera permission and try again.")
-      console.error("Camera error:", error)
-      stopCamera()
+      setCameraError("Unable to access camera. Please check permissions.")
+      console.error(error)
+      setIsCameraOpen(false)
+    }
+  }
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setCameraError("")
+    const qrReader = new Html5Qrcode("qr-reader-hidden")
+    try {
+      const decodedText = await qrReader.scanFile(file, true)
+      setLoginInput(decodedText)
+      onGetOtp(decodedText)
+    } catch (err) {
+      setCameraError("No valid QR code found in the image.")
+      console.error(err)
+    } finally {
+      qrReader.clear()
     }
   }
 
   useEffect(() => {
     if (loginMethod !== "qr") {
-      stopCamera()
-      setCameraError("")
+      stopScanner()
     }
   }, [loginMethod])
 
   useEffect(() => {
     return () => {
-      stopCamera()
+      stopScanner()
     }
   }, [])
 
@@ -496,33 +542,41 @@ function LoginForm({ loginMethod, setLoginMethod, loginInput, setLoginInput, onG
 
       {loginMethod === "qr" ? (
         <div className="space-y-4">
-          <div className="aspect-square max-w-[200px] mx-auto border-2 border-dashed border-primary/30 rounded-lg flex items-center justify-center bg-muted/20">
-            {isCameraOpen ? (
-              <video ref={videoRef} autoPlay muted playsInline className="w-full h-full rounded-lg object-cover" />
-            ) : (
-              <div className="text-center p-4">
-                <div className="relative">
-                  <div className="w-32 h-32 relative">
-                    <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-primary rounded-tl" />
-                    <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-primary rounded-tr" />
-                    <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-primary rounded-bl" />
-                    <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-primary rounded-br" />
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <QrCode className="w-12 h-12 text-muted-foreground" />
-                    </div>
-                  </div>
-                </div>
+          <div id="qr-reader-hidden" style={{ display: "none" }}></div>
+          <div className="aspect-square max-w-[250px] mx-auto border-2 border-dashed border-primary/30 rounded-xl flex items-center justify-center bg-muted/20 relative overflow-hidden">
+            <div id="qr-reader" className="w-full h-full"></div>
+            {!isCameraOpen && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
+                <QrCode className="w-12 h-12 text-muted-foreground mb-2" />
+                <p className="text-[10px] text-muted-foreground">Scan your Swasthya Card QR</p>
               </div>
             )}
           </div>
-          <button
-            type="button"
-            onClick={handleScanQrClick}
-            className="w-full py-3 bg-saffron text-saffron-foreground font-semibold rounded-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
-          >
-            <QrCode className="w-4 h-4" /> {isCameraOpen ? "Stop Scan" : "Tap to Scan"}
-          </button>
-          {cameraError && <p className="text-xs text-destructive text-center">{cameraError}</p>}
+          
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={handleScanQrClick}
+              className={`py-2.5 ${isCameraOpen ? 'bg-destructive text-destructive-foreground' : 'bg-primary text-primary-foreground'} font-semibold rounded-lg hover:opacity-90 transition-all text-xs flex items-center justify-center gap-2`}
+            >
+              <Smartphone className="w-3.5 h-3.5" /> {isCameraOpen ? "Stop Camera" : "Open Camera"}
+            </button>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="py-2.5 bg-saffron text-saffron-foreground font-semibold rounded-lg hover:opacity-90 transition-all text-xs flex items-center justify-center gap-2"
+            >
+              <FileText className="w-3.5 h-3.5" /> Upload Image
+            </button>
+            <input 
+              ref={fileInputRef}
+              type="file" 
+              accept="image/*" 
+              onChange={handleFileUpload} 
+              className="hidden" 
+            />
+          </div>
+          {cameraError && <p className="text-[10px] text-destructive text-center font-medium bg-destructive/5 py-1 px-2 rounded">{cameraError}</p>}
         </div>
       ) : (
         <div className="space-y-4">
@@ -535,7 +589,7 @@ function LoginForm({ loginMethod, setLoginMethod, loginInput, setLoginInput, onG
                 type={loginMethod === "mobile" ? "tel" : "text"}
                 value={loginInput}
                 onChange={(e) => setLoginInput(e.target.value)}
-                placeholder={loginMethod === "swasthya-id" ? "XX-XXXX-XXXX-XXXX" : "+91 XXXXX XXXXX"}
+                placeholder={loginMethod === "swasthya-id" ? "SW-YYYY-XXXX" : "+91 XXXXX XXXXX"}
                 className="w-full px-4 py-3 border border-input rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
               />
               {loginMethod === "mobile" ? (
@@ -547,11 +601,11 @@ function LoginForm({ loginMethod, setLoginMethod, loginInput, setLoginInput, onG
           </div>
           <button
             type="button"
-            onClick={onGetOtp}
+            onClick={() => onGetOtp()}
             disabled={!loginInput || isLoading}
-            className="w-full py-3 bg-success text-success-foreground font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
+            className="w-full py-3 bg-success text-success-foreground font-semibold rounded-lg hover:opacity-90 transition-all shadow-sm disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            {isLoading ? "Sending..." : "Get OTP"}
+            {isLoading ? "Validating..." : "Get OTP"}
             {!isLoading && <ArrowRight className="w-4 h-4" />}
           </button>
         </div>

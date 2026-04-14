@@ -25,8 +25,10 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { resolveAssetUrl } from "@/lib/backend"
-import { db } from "@/lib/firebase"
-import { doc, updateDoc, getDoc } from "firebase/firestore"
+import { doc, updateDoc, getDoc, onSnapshot } from "firebase/firestore"
+import { auth, db } from "@/lib/firebase"
+import { onAuthStateChanged } from "firebase/auth"
+import { Skeleton } from "@/components/ui/skeleton"
 
 interface ProfileProps {
   onChangeLocation?: () => void
@@ -55,6 +57,7 @@ type ModalType = "info" | "help" | "emergency" | null
 export function Profile({ onChangeLocation, onUpdate }: ProfileProps) {
   const [activeModal, setActiveModal] = useState<ModalType>(null)
   const [storedUser, setStoredUser] = useState<any>(null)
+  const [isLoading, setIsLoading] = useState(true)
   
   // State for Personal Info Form
   const [piName, setPiName] = useState("")
@@ -74,19 +77,18 @@ export function Profile({ onChangeLocation, onUpdate }: ProfileProps) {
   const qrRef = useRef<HTMLCanvasElement>(null)
 
   const profileData = useMemo(() => {
-    if (!storedUser) return fallbackProfileData
+    if (!storedUser) return null
     const resolved = resolveAssetUrl(storedUser.photo_url)
     return {
-      ...fallbackProfileData,
-      name: storedUser.full_name ?? storedUser.name ?? fallbackProfileData.name,
-      email: storedUser.email ?? fallbackProfileData.email,
-      phone: storedUser.mobile_number ? `+91 ${storedUser.mobile_number}` : (storedUser.phone ?? fallbackProfileData.phone),
-      location: storedUser.location ?? fallbackProfileData.location,
-      dob: storedUser.dob ?? fallbackProfileData.dob,
-      bloodType: storedUser.blood_group ?? fallbackProfileData.bloodType,
-      gender: storedUser.gender ?? fallbackProfileData.gender,
-      avatar: resolved ?? fallbackProfileData.avatar,
-      swasthyaId: storedUser.swasthya_id ?? fallbackProfileData.swasthyaId,
+      name: storedUser.full_name ?? storedUser.name ?? "User",
+      email: storedUser.email ?? "",
+      phone: storedUser.mobile_number ? `+91 ${storedUser.mobile_number}` : (storedUser.phone ?? ""),
+      location: storedUser.location ?? "",
+      dob: storedUser.dob ?? "Not set",
+      bloodType: storedUser.blood_group ?? "Not set",
+      gender: storedUser.gender ?? "Not set",
+      avatar: resolved || null,
+      swasthyaId: storedUser.swasthya_id ?? "Generating...",
       emergencyContact: {
         name: storedUser.emergency_contact_name ?? "",
         phone: storedUser.emergency_contact ?? "",
@@ -105,44 +107,54 @@ export function Profile({ onChangeLocation, onUpdate }: ProfileProps) {
   }, [profileData?.swasthyaId])
 
   useEffect(() => {
-    const fetchFreshData = async () => {
-      try {
-        const raw = sessionStorage.getItem("swasthya-user")
-        if (raw) {
-          let user = JSON.parse(raw)
-          
-          if (user.uid) {
-            const userDoc = await getDoc(doc(db, "users", user.uid))
-            if (userDoc.exists()) {
-              const freshData = userDoc.data()
-              user = { ...user, ...freshData }
-              sessionStorage.setItem("swasthya-user", JSON.stringify(user))
+    let unsubSnapshot: (() => void) | null = null
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        try {
+          const docRef = doc(db, "users", user.uid)
+          unsubSnapshot = onSnapshot(docRef, (docSnap) => {
+            if (docSnap.exists()) {
+              const userData = docSnap.data()
+              console.log("Firestore Data Received:", userData) // For verification
+              setStoredUser({ uid: user.uid, ...userData })
+              
+              sessionStorage.setItem("swasthya-user", JSON.stringify({ uid: user.uid, ...userData }))
+              
+              setPiName(userData.full_name ?? userData.name ?? "")
+              setPiEmail(userData.email ?? "")
+              setPiPhone(userData.mobile_number ?? userData.phone ?? "")
+              setPiDob(userData.dob ?? "")
+              setPiBlood(userData.blood_group ?? "")
+              setPiGender(userData.gender ?? "")
+              
+              setEcName(userData.emergency_contact_name ?? "")
+              setEcPhone(userData.emergency_contact ?? "")
+              setEcRelation(userData.emergency_contact_relation ?? "")
+            } else {
+              console.warn("No user document found for UID:", user.uid)
+              setStoredUser({ uid: user.uid, name: user.displayName || "User" })
             }
-          }
-          
-          setStoredUser(user)
-          
-          // initialize personal info state
-          setPiName(user.full_name ?? user.name ?? "")
-          setPiEmail(user.email ?? "")
-          setPiPhone(user.mobile_number ?? user.phone ?? user.phone_number ?? "")
-          setPiDob(user.dob ?? "")
-          setPiBlood(user.blood_group ?? "")
-          setPiGender(user.gender ?? "")
-          
-          // initialize emergency state
-          setEcName(user.emergency_contact_name ?? user.emergency_contact?.name ?? fallbackProfileData.emergencyContact.name)
-          setEcPhone(user.emergency_contact?.phone ?? user.emergency_contact ?? fallbackProfileData.emergencyContact.phone)
-          setEcRelation(user.emergency_contact_relation ?? user.emergency_contact?.relation ?? fallbackProfileData.emergencyContact.relation)
+            setIsLoading(false)
+          }, (error) => {
+            console.error("Snapshot error:", error)
+            setIsLoading(false)
+          })
+        } catch (err) {
+          console.error("Auth sync error:", err)
+          setIsLoading(false)
         }
-      } catch (err) {
-        console.error("Error fetching fresh profile data", err)
+      } else {
         setStoredUser(null)
+        setIsLoading(false)
       }
+    })
+
+    return () => {
+      unsubscribeAuth()
+      if (unsubSnapshot) unsubSnapshot()
     }
-    
-    fetchFreshData()
-  }, [activeModal])
+  }, [])
 
   const handleSavePersonalInfo = async () => {
     if (!storedUser?.uid) return
@@ -190,7 +202,7 @@ export function Profile({ onChangeLocation, onUpdate }: ProfileProps) {
   }
 
   // The handleDownloadCard is now handled by PDFDownloadLink
-  const fileName = `${profileData.name.toLowerCase().replace(/\s+/g, "_")}_${profileData.swasthyaId.toLowerCase()}.pdf`
+  const fileName = profileData ? `${profileData.name.toLowerCase().replace(/\s+/g, "_")}_${profileData.swasthyaId.toLowerCase()}.pdf` : "swasthya_card.pdf"
 
   return (
     <div className="space-y-3">
@@ -214,72 +226,103 @@ export function Profile({ onChangeLocation, onUpdate }: ProfileProps) {
                 SWASTHYA LINK
               </h2>
             </div>
-            <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: "#FFFFFF33" }}>
-              <span className="text-sm font-bold text-white">S</span>
+            <div className="w-7 h-7 rounded-sm flex items-center justify-center bg-white/10 backdrop-blur-sm">
+              <span className="text-sm font-black text-white italic">SL</span>
             </div>
           </div>
 
           {/* Card Body */}
           <div className="p-3">
-            <div className="flex gap-3">
-              {/* Photo */}
-              <div className="flex-shrink-0">
-                <div className="w-16 h-20 rounded border-2 overflow-hidden" style={{ borderColor: "#E2E8F0", backgroundColor: "#F1F5F9" }}>
-                  <img
-                    src={profileData.avatar}
-                    alt={profileData.name}
-                    className="w-full h-full object-cover"
-                  />
+            {isLoading ? (
+              <div className="flex gap-3">
+                <Skeleton className="w-16 h-20 rounded" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-3 w-3/4" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <Skeleton className="h-3 w-full" />
+                    <Skeleton className="h-3 w-full" />
+                  </div>
+                  <Skeleton className="h-3 w-1/2" />
                 </div>
               </div>
+            ) : (
+              <div className="flex gap-3">
+                {/* Photo */}
+                <div className="flex-shrink-0">
+                  <div className="w-16 h-20 rounded border-2 overflow-hidden bg-slate-100 border-slate-200">
+                    {(profileData && profileData.avatar) ? (
+                      <img
+                        src={profileData.avatar}
+                        alt={profileData.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-slate-100">
+                        <User className="h-8 w-8 text-slate-300" />
+                      </div>
+                    )}
+                  </div>
+                </div>
 
-              {/* Info */}
-              <div className="flex-1 space-y-1.5">
-                <div>
-                  <p className="text-[9px] uppercase tracking-wide" style={{ color: "#64748B" }}>Name / नाम</p>
-                  <p className="text-sm font-bold" style={{ color: "#0F172A" }}>{profileData.name}</p>
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
+                {/* Info */}
+                <div className="flex-1 space-y-1.5">
                   <div>
-                    <p className="text-[9px] uppercase tracking-wide" style={{ color: "#64748B" }}>DOB</p>
-                    <p className="text-xs font-semibold" style={{ color: "#0F172A" }}>{profileData.dob}</p>
+                    <p className="text-[9px] uppercase tracking-wide text-slate-500">Name / नाम</p>
+                    <p className="text-sm font-bold text-slate-900">{profileData?.name || "User"}</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <div>
+                      <p className="text-[9px] uppercase tracking-wide text-slate-500">DOB</p>
+                      <p className="text-xs font-semibold text-slate-900">{profileData?.dob || "Not set"}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] uppercase tracking-wide text-slate-500">Gender</p>
+                      <p className="text-xs font-semibold text-slate-900 capitalize">
+                        {profileData?.gender || "Not set"}
+                      </p>
+                    </div>
                   </div>
                   <div>
-                    <p className="text-[9px] uppercase tracking-wide" style={{ color: "#64748B" }}>Gender</p>
-                    <p className="text-xs font-semibold" style={{ color: "#0F172A" }}>
-                    {profileData.gender?.toLowerCase() === "male" ? "M" : 
-                     profileData.gender?.toLowerCase() === "female" ? "F" : 
-                     profileData.gender?.toLowerCase() === "other" ? "O" : 
-                     profileData.gender || "-"}
-                  </p>
+                    <p className="text-[9px] uppercase tracking-wide flex items-center gap-0.5 text-slate-500">
+                      <Droplets className="h-2.5 w-2.5 text-red-600" />
+                      Blood Group
+                    </p>
+                    <p className="text-xs font-bold text-red-600">{profileData?.bloodType || "Not set"}</p>
                   </div>
-                </div>
-                <div>
-                  <p className="text-[9px] uppercase tracking-wide flex items-center gap-0.5" style={{ color: "#64748B" }}>
-                    <Droplets className="h-2.5 w-2.5" style={{ color: "#B91C1C" }} />
-                    Blood Group
-                  </p>
-                  <p className="text-xs font-bold" style={{ color: "#B91C1C" }}>{profileData.bloodType}</p>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* ID and QR */}
-            <div className="mt-3 pt-2.5 flex items-center justify-between" style={{ borderTop: "1px solid #E2E8F0" }}>
-              <div>
-                <p className="text-[9px] uppercase tracking-wide" style={{ color: "#64748B" }}>Swasthya ID</p>
-                <p className="text-xs font-mono font-bold tracking-wider" style={{ color: "#0F172A" }}>
-                  {profileData.swasthyaId}
-                </p>
+            <div className="mt-3 pt-2.5 flex items-center justify-between border-t border-slate-100">
+              <div className="flex-1">
+                <p className="text-[9px] uppercase tracking-wide text-slate-500">Swasthya ID</p>
+                {isLoading ? (
+                  <Skeleton className="h-4 w-3/4 mt-1" />
+                ) : (
+                  <p className="text-xs font-mono font-bold tracking-wider text-slate-900">
+                    {profileData?.swasthyaId || "Not Available"}
+                  </p>
+                )}
               </div>
-              <div className="w-32 h-32 rounded border bg-white p-2 flex items-center justify-center" style={{ borderColor: "#E2E8F0" }}>
-                <QRCodeCanvas 
-                  ref={qrRef}
-                  value={profileData.swasthyaId}
-                  size={120}
-                  level="H"
-                  includeMargin={false}
-                />
+              <div className="w-16 h-16 rounded border bg-white p-1 flex items-center justify-center border-slate-100">
+                {isLoading ? (
+                  <Skeleton className="w-full h-full" />
+                ) : (
+                  profileData?.swasthyaId ? (
+                    <QRCodeCanvas 
+                      ref={qrRef}
+                      value={profileData.swasthyaId}
+                      size={60}
+                      level="H"
+                      includeMargin={false}
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-slate-50 flex items-center justify-center">
+                      <QrCode className="h-6 w-6 text-slate-200" />
+                    </div>
+                  )
+                )}
               </div>
             </div>
           </div>
@@ -287,21 +330,37 @@ export function Profile({ onChangeLocation, onUpdate }: ProfileProps) {
       </Card>
 
       {/* Download Button - React PDF */}
-      <PDFDownloadLink
-        document={<SwasthyaPDF data={{ ...profileData, qrCodeBase64: qrBase64 || undefined }} />}
-        fileName={fileName}
-        className="w-full"
-      >
-        {({ loading }) => (
-          <Button 
-            disabled={loading || !qrBase64}
-            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium py-2.5 text-xs shadow-sm"
-          >
-            <Download className="h-3.5 w-3.5 mr-1.5" />
-            {loading ? "Preparing PDF..." : "Download Swasthya Card"}
-          </Button>
-        )}
-      </PDFDownloadLink>
+      {profileData && qrBase64 && (
+        <PDFDownloadLink
+          document={<SwasthyaPDF data={{ ...profileData, qrCodeBase64: qrBase64 || undefined }} />}
+          fileName={fileName}
+          className="w-full"
+        >
+          {({ loading }) => (
+            <Button 
+              disabled={loading}
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium py-2.5 text-xs shadow-sm mb-3"
+            >
+              <Download className="h-3.5 w-3.5 mr-1.5" />
+              {loading ? "Preparing PDF..." : "Download Swasthya Card"}
+            </Button>
+          )}
+        </PDFDownloadLink>
+      )}
+
+      {(!profileData || !qrBase64) && !isLoading && (
+        <Button 
+          disabled
+          className="w-full bg-primary/50 text-primary-foreground font-medium py-2.5 text-xs shadow-sm mb-3"
+        >
+          <QrCode className="h-3.5 w-3.5 mr-1.5" />
+          Card Not Available
+        </Button>
+      )}
+
+      {isLoading && (
+        <Skeleton className="w-full h-10 mb-3" />
+      )}
 
       {/* Action Buttons */}
       <Card className="border bg-card shadow-sm">
@@ -367,7 +426,7 @@ export function Profile({ onChangeLocation, onUpdate }: ProfileProps) {
               <div className="flex-1 text-left">
                 <p className="text-[10px] text-muted-foreground">Emergency Contact</p>
                 <p className="text-xs font-medium text-foreground">
-                  {profileData.emergencyContact.name ? `${profileData.emergencyContact.name} (${profileData.emergencyContact.relation || 'Contact'})` : 'Add Emergency Contact'}
+                  {profileData?.emergencyContact.name ? `${profileData.emergencyContact.name} (${profileData.emergencyContact.relation || 'Contact'})` : 'Add Emergency Contact'}
                 </p>
               </div>
               <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
